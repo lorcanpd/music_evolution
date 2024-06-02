@@ -128,8 +128,8 @@ impl GenomePlayer {
                     for j in 0..10 { // Number of harmonics
                         let harmonic_frequency = frequency * (j + 1) as f32;
                         let harmonic_amplitude = amplitude / (j + 1) as f32;
-                        sample_value += harmonic_amplitude * (2
-                            .0 * PI * harmonic_frequency * time + phase
+                        sample_value += harmonic_amplitude * (
+                            2.0 * PI * harmonic_frequency * time + phase
                         ).sin();
                     }
 
