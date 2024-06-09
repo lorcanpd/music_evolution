@@ -39,19 +39,24 @@ The Music Evolution Project is an experimental Rust application inspired by [Dar
     ```
 4. Example Output
     ```{sh}
-    Genome: [0, 1, 0, 1, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0]
-    Processing track 1
-    Processing track 2
-    Processing track 3
-    Processing track 4
-    Processing track 5
-    Processing track 6
-    Processing track 7
+    Father phenotype:
+    Total song length: xxxxms
+    Mother phenotype:
+    Total song length: xxxxms
+    Child phenotype:
+    Total song length: xxxxms
+
     ```
-    You should hear sounds like the old dialup connection tones.
+    You should hear three sound clips which resemble the old dialup connection tones: two parents and their child.
 
 ## Project Structure
-* src/main.rs: The main entry point of the application, containing the logic for reading genomes, processing musical notes, and playing the resulting waveforms.
+* src/main.rs: The main entry point of the application, containing the logic for generating random genomes, performing crossover, decoding genomes, and playing the resulting waveforms.
+* src/genome.rs: Defines the Genome structure and its initialization.
+* src/decode_genome.rs: Contains the functionality to decode genomes into musical parameters.
+* src/play_genes.rs: Plays the genes decoded from the genome using the rodio crate.
+* src/genome_crosser.rs: Contains the logic for crossing over genomes to produce a child genome.
+* src/graph.rs: Contains early development logic for the world the songs will inhabit. Nodes where they compete and reproduce, and edges which they migrate along from node to node.
+
 
 ## Contributing
 This project is currently under early development and is not yet open for contributions.
