@@ -94,7 +94,9 @@ impl Graph {
                 let parent2 = &node.songs[parent2_index];
 
                 let child_genome = GenomeCrosser::crossover(&parent1.genome, &parent2.genome);
-                new_generation.entry(node_id).or_default().push(Song { genome: child_genome, fitness: 0.0 });
+                new_generation.entry(node_id).or_default().push(
+                    Song { genome: child_genome, fitness: 0.0 }
+                );
             }
         }
 
@@ -126,7 +128,9 @@ impl Graph {
         }
     }
 
-    fn select_parent_index(&self, songs: &[Song], total_fitness: f32, rng: &mut rand::prelude::ThreadRng) -> usize {
+    fn select_parent_index(
+        &self, songs: &[Song], total_fitness: f32, rng: &mut rand::prelude::ThreadRng
+    ) -> usize {
         let mut cumulative_fitness = 0.0;
         let selection_point = rng.gen_range(0.0..total_fitness);
 
@@ -140,7 +144,10 @@ impl Graph {
         songs.len() - 1
     }
 
-    fn select_parent_index_except(&self, songs: &[Song], total_fitness: f32, rng: &mut rand::prelude::ThreadRng, exclude_index: usize) -> usize {
+    fn select_parent_index_except(
+        &self, songs: &[Song], total_fitness: f32,
+        rng: &mut rand::prelude::ThreadRng, exclude_index: usize
+    ) -> usize {
         let mut cumulative_fitness = 0.0;
         let selection_point = rng.gen_range(0.0..total_fitness - songs[exclude_index].fitness);
 

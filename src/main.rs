@@ -12,9 +12,13 @@ use rand::Rng;
 fn main() {
     // Generate random parent genomes. Randomly assign 0s and 1s to the genome.
     let father_genome = Genome::initialise_random_genome();
-    let decoded_father_genome = DecodedGenome::decode(father_genome.get_left_chromosome(), father_genome.get_right_chromosome());
+    let decoded_father_genome = DecodedGenome::decode(
+        father_genome.get_left_chromosome(), father_genome.get_right_chromosome()
+    );
     let mother_genome = Genome::initialise_random_genome();
-    let decoded_mother_genome = DecodedGenome::decode(mother_genome.get_left_chromosome(), mother_genome.get_right_chromosome());
+    let decoded_mother_genome = DecodedGenome::decode(
+        mother_genome.get_left_chromosome(), mother_genome.get_right_chromosome()
+    );
 
     // Crossover to produce child genome
     let (child_left, child_right) = GenomeCrosser::crossover(
@@ -28,7 +32,9 @@ fn main() {
     let child_genome = Genome::new(child_left, child_right);
 
     // Decode the genome
-    let decoded_genome = DecodedGenome::decode(child_genome.get_left_chromosome(), child_genome.get_right_chromosome());
+    let decoded_genome = DecodedGenome::decode(
+        child_genome.get_left_chromosome(), child_genome.get_right_chromosome()
+    );
 
     println!("Father phenotype:");
     play_genes(&decoded_father_genome).unwrap();
@@ -39,3 +45,27 @@ fn main() {
     println!("Child phenotype:");
     play_genes(&decoded_genome).unwrap();
 }
+
+
+// Example of WAV file generation
+
+// fn main() -> Result<(), Box<dyn Error>> {
+//     // Generate random parent genomes
+//     let father_genome = Genome::initialise_random_genome();
+//     let decoded_father_genome = DecodedGenome::decode(
+//         father_genome.get_left_chromosome(),
+//         father_genome.get_right_chromosome(),
+//     );
+//
+//     // Play father's genome
+//     println!("Father phenotype:");
+//     play_genes(&decoded_father_genome)?;
+//
+//     // Generate WAV file for father
+//     generate_wav(&decoded_father_genome, "father.wav")?;
+//     println!("Father's WAV file generated.");
+//
+//     // Similarly for mother and child genomes...
+//
+//     Ok(())
+// }
