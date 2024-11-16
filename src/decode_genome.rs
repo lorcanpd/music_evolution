@@ -1,7 +1,5 @@
 use std::time::Duration;
-use crate::genome::{
-    BITS_PER_PARAMETER, PARAMETERS, NOTE_CODON, LOW_PASS_CODON, HIGH_PASS_CODON,
-    REVERB_CODON, ECHO_CODON, NOTE_CODON_SIZE, EFFECT_CODON_SIZE};
+use crate::genome::{Genome, BITS_PER_PARAMETER, PARAMETERS};
 use std::f32::consts::PI;
 
 pub struct DecodedParameters {
@@ -25,42 +23,76 @@ pub enum Effect {
 }
 
 impl DecodedGenome {
-    pub fn decode(left_chromosome: &[u8], right_chromosome: &[u8]) -> Self {
+    pub fn decode(genome: &Genome) -> Self {
         let mut notes = Vec::new();
         let mut effects = Vec::new();
 
-        // Decode notes from the left chromosome
-        let mut i = 0;
-        while i < left_chromosome.len() {
-            if i + NOTE_CODON_SIZE <= left_chromosome.len() && matches_codon(
-                &left_chromosome[i..i + NOTE_CODON_SIZE], &NOTE_CODON) {
-                if i + PARAMETERS * BITS_PER_PARAMETER <= left_chromosome.len() {
-                    i += NOTE_CODON_SIZE;
-                    let params = decode_parameters(
-                        &left_chromosome[i..i + PARAMETERS * BITS_PER_PARAMETER]);
-                    notes.push(params);
-                    i += PARAMETERS * BITS_PER_PARAMETER;
-                } else {
-                    break
-                }
-            } else {
-                i += 1;
-            }
-        }
+        // Decode the note chromosome.
+        let note_chromosome = genome.notes.get_left_chromosome();
+        let note_codons = vec![
+            genome.sine_codon.get_left_chromosome(),
+            genome.square_codon.get_left_chromosome(),
+            genome.custom_codon.get_left_chromosome(),
+        ];
 
-        // Decode effects from the right chromosome
-        let mut j = 0;
-        while j < right_chromosome.len() {
-            if let Some((effect, effect_size)) = decode_effects(&right_chromosome[j..]) {
-                effects.push(effect);
-                j += effect_size; // Advance by the size of the effect codon and parameters
-            } else {
-                j += 1;
-            }
-        }
+        notes.extend(decode_chromosome(note_chromosome, &note_codons));
+
+        // Decode the effect chromosome.
+        let effect_chromosome = genome.effects.get_left_chromosome();
+        let effect_codons = vec![
+            (Effect::LowPass(0.0), genome.low_pass_codon.get_left_chromosome()),
+            (Effect::HighPass(0.0), genome.high_pass_codon.get_left_chromosome()),
+            (Effect::Reverb(Duration::from_secs(0), 0.0), genome.reverb_codon.get_left_chromosome()),
+            (Effect::Echo(Duration::from_secs(0), 0.0), genome.echo_codon.get_left_chromosome()),
+        ];
+        effects.extend(decode_effect_chromosome(effect_chromosome, &effect_codons));
 
         DecodedGenome { notes, effects }
     }
+}
+
+fn decode_chromosome(chromosome: &[u8], codons: &[&[u8]]) -> Vec<DecodedParameters> {
+    let mut decoded_params = Vec::new();
+    let param_length = PARAMETERS * BITS_PER_PARAMETER;
+    let mut i = 0;
+
+    while i < chromosome.len() {
+        for codon in codons {
+            if i + codon.len() <= chromosome.len() && matches_codon(
+                &chromosome[i..i + codon.len()], codon
+            ) {
+                if i + param_length <= chromosome.len() {
+                    i += codon.len();
+                    let params = decode_parameters(
+                        &chromosome[i..i + param_length]
+                    );
+                    decoded_params.push(params);
+                    i += param_length;
+                } else {
+                    break;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    decoded_params
+}
+
+fn decode_effect_chromosome(chromosome: &[u8], codons: &[(Effect, &[u8])]) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    let mut i = 0;
+
+    while i < chromosome.len() {
+        if let Some((effect, effect_size)) = decode_effects(&chromosome[i..], codons) {
+            effects.push(effect);
+            i += effect_size;
+        } else {
+            i += 1;
+        }
+    }
+
+    effects
 }
 
 fn decode_parameters(bits: &[u8]) -> DecodedParameters {
@@ -78,70 +110,47 @@ fn decode_parameters(bits: &[u8]) -> DecodedParameters {
     }
 }
 
-// fn decode_effects(bits: &[u8]) -> Option<Effect> {
-//     if matches_codon(bits, &LOW_PASS_CODON) {
-//         Some(Effect::LowPass(bits_to_amplitude(&bits[9..17])))
-//     } else if matches_codon(bits, &HIGH_PASS_CODON) {
-//         Some(Effect::HighPass(bits_to_amplitude(&bits[9..17])))
-//     } else if matches_codon(bits, &REVERB_CODON) {
-//         Some(Effect::Reverb(
-//             bits_to_duration(&bits[9..17]),
-//             bits_to_amplitude(&bits[17..25]),
-//         ))
-//     } else if matches_codon(bits, &ECHO_CODON) {
-//         Some(Effect::Echo(
-//             bits_to_duration(&bits[9..17]),
-//             bits_to_amplitude(&bits[17..25]),
-//         ))
-//     } else {
-//         None
-//     }
-// }
-
-fn decode_effects(bits: &[u8]) -> Option<(Effect, usize)> {
-    if bits.len() >= EFFECT_CODON_SIZE {
-        if matches_codon(&bits[0..EFFECT_CODON_SIZE], &LOW_PASS_CODON) {
-            let total_size = EFFECT_CODON_SIZE + BITS_PER_PARAMETER;
+fn decode_effects(bits: &[u8], codons: &[(Effect, &[u8])]) -> Option<(Effect, usize)> {
+    for (effect, codon) in codons {
+        let codon_size = codon.len();
+        if bits.len() >= codon_size && matches_codon(&bits[0..codon_size], codon) {
+            let total_size = match effect {
+                Effect::LowPass(_) | Effect::HighPass(_) => codon_size + BITS_PER_PARAMETER,
+                Effect::Reverb(_, _) | Effect::Echo(_, _) => codon_size + 2 * BITS_PER_PARAMETER,
+            };
             if bits.len() >= total_size {
-                let cutoff = bits_to_amplitude(&bits[EFFECT_CODON_SIZE..total_size]);
-                Some((Effect::LowPass(cutoff), total_size))
-            } else {
-                None
+                let effect_instance = match effect {
+                    Effect::LowPass(_) => Effect::LowPass(
+                        bits_to_amplitude(&bits[codon_size..total_size])
+                    ),
+                    Effect::HighPass(_) => Effect::HighPass(
+                        bits_to_amplitude(&bits[codon_size..total_size])
+                    ),
+                    Effect::Reverb(_, _) => {
+                        let delay = bits_to_duration(
+                            &bits[codon_size..codon_size + BITS_PER_PARAMETER]
+                        );
+                        let feedback = bits_to_amplitude(
+                            &bits[codon_size + BITS_PER_PARAMETER..total_size]
+                        );
+                        Effect::Reverb(delay, feedback)
+                    }
+                    Effect::Echo(_, _) => {
+                        let delay = bits_to_duration(
+                            &bits[codon_size..codon_size + BITS_PER_PARAMETER]
+                        );
+                        let feedback = bits_to_amplitude(
+                            &bits[codon_size + BITS_PER_PARAMETER..total_size]
+                        );
+                        Effect::Echo(delay, feedback)
+                    }
+                };
+                return Some((effect_instance, total_size));
             }
-        } else if matches_codon(&bits[0..EFFECT_CODON_SIZE], &HIGH_PASS_CODON) {
-            let total_size = EFFECT_CODON_SIZE + BITS_PER_PARAMETER;
-            if bits.len() >= total_size {
-                let cutoff = bits_to_amplitude(&bits[EFFECT_CODON_SIZE..total_size]);
-                Some((Effect::HighPass(cutoff), total_size))
-            } else {
-                None
-            }
-        } else if matches_codon(&bits[0..EFFECT_CODON_SIZE], &REVERB_CODON) {
-            let total_size = EFFECT_CODON_SIZE + 2 * BITS_PER_PARAMETER;
-            if bits.len() >= total_size {
-                let delay = bits_to_duration(&bits[EFFECT_CODON_SIZE..EFFECT_CODON_SIZE + BITS_PER_PARAMETER]);
-                let feedback = bits_to_amplitude(&bits[EFFECT_CODON_SIZE + BITS_PER_PARAMETER..total_size]);
-                Some((Effect::Reverb(delay, feedback), total_size))
-            } else {
-                None
-            }
-        } else if matches_codon(&bits[0..EFFECT_CODON_SIZE], &ECHO_CODON) {
-            let total_size = EFFECT_CODON_SIZE + 2 * BITS_PER_PARAMETER;
-            if bits.len() >= total_size {
-                let delay = bits_to_duration(&bits[EFFECT_CODON_SIZE..EFFECT_CODON_SIZE + BITS_PER_PARAMETER]);
-                let feedback = bits_to_amplitude(&bits[EFFECT_CODON_SIZE + BITS_PER_PARAMETER..total_size]);
-                Some((Effect::Echo(delay, feedback), total_size))
-            } else {
-                None
-            }
-        } else {
-            None
         }
-    } else {
-        None
     }
+    None
 }
-
 
     fn bits_to_frequency(bits: &[u8]) -> f32 {
     let value = bits_to_value(bits);
