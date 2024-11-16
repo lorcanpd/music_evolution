@@ -2,44 +2,34 @@ mod genome;
 mod decode_genome;
 mod play_genes;
 mod genome_crosser;
+mod graph;
+mod database;
 
 use genome::Genome;
 use decode_genome::DecodedGenome;
 use play_genes::play_genes;
 use genome_crosser::GenomeCrosser;
+use postgres::{Client, NoTls};
 use rand::Rng;
+use std::collections::HashMap;
 
 fn main() {
-    // Generate random parent genomes. Randomly assign 0s and 1s to the genome.
-    let father_genome = Genome::initialise_random_genome(
-        128, 256, 6, 8
-    );
-    let decoded_father_genome = DecodedGenome::decode(
-        &father_genome
-    );
-    let mother_genome = Genome::initialise_random_genome(
-        128, 256, 6, 8
-    );
-    let decoded_mother_genome = DecodedGenome::decode(
-        &mother_genome
-    );
+    let mut client = Client::connect("host=localhost user=postgres", NoTls).unwrap();
 
-    let child_genome = GenomeCrosser::crossover(
-        &father_genome, &mother_genome
-    );
+    // Load current generation
+    let current_generation = 1;
+    let nodes = database::load_current_generation(&mut client, current_generation);
 
-    // Decode the genome
-    let decoded_genome = DecodedGenome::decode(
-        &child_genome
-    );
+    // Simulate rating process
+    let mut fitness_scores: HashMap<usize, Vec<f32>> = HashMap::new();
+    for (node_id, node) in &nodes {
+        let scores: Vec<f32> = node.songs.iter().map(|_| rand::thread_rng().gen_range(0.0..1.0)).collect();
+        fitness_scores.insert(*node_id, scores);
+    }
 
-    println!("Father phenotype:");
-    play_genes(&decoded_father_genome).unwrap();
+    // Store fitness scores
+    database::store_fitness_scores(&mut client, &fitness_scores);
 
-    println!("Mother phenotype:");
-    play_genes(&decoded_mother_genome).unwrap();
-
-    // Play the decoded child genome
-    println!("Child phenotype:");
-    play_genes(&decoded_genome).unwrap();
+    // Calculate fitness and generate next generation
+    database::calculate_fitness_and_generate_next_generation(&mut client, current_generation);
 }

@@ -179,4 +179,35 @@ impl Graph {
             }
         }
     }
+
+    pub fn random_instantiate(num_nodes: usize, total_capacity: usize) -> Self {
+        let mut rng = rand::thread_rng();
+        let mut graph = Graph::new();
+        let mut remaining_capacity = total_capacity;
+
+        // Add nodes with varying capacities
+        for id in 0..num_nodes {
+            let capacity = if id == num_nodes - 1 {
+                remaining_capacity
+            } else {
+                rng.gen_range(1..=remaining_capacity / (num_nodes - id))
+            };
+            graph.add_node(id, capacity);
+            remaining_capacity -= capacity;
+        }
+
+        // Ensure the graph is connected but sparse
+        for id in 0..num_nodes {
+            let num_edges = rng.gen_range(1..=num_nodes / 2);
+            for _ in 0..num_edges {
+                let destination = rng.gen_range(0..num_nodes);
+                if destination != id {
+                    let weight = rng.gen_range(0.0..1.0);
+                    graph.add_edge(id, destination, weight);
+                }
+            }
+        }
+
+        graph
+    }
 }
