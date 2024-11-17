@@ -67,7 +67,11 @@ fn decode_chromosome(chromosome: &[u8], codons: &[&[u8]]) -> Vec<DecodedParamete
                         &chromosome[i..i + param_length]
                     );
                     decoded_params.push(params);
-                    i += param_length;
+                    if i + param_length < chromosome.len() {
+                        i += param_length;
+                    } else {
+                        break;
+                    }
                 } else {
                     break;
                 }
