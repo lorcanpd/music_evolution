@@ -1,80 +1,47 @@
-use postgres::{Client, NoTls};
-use std::collections::HashMap;
-use crate::graph::{Graph, Node, Song};
+use postgres::{Client, NoTls, Error};
+use std::env;
+use dotenv::dotenv;
 
-pub fn load_current_generation(client: &mut Client, generation_number: i32) -> HashMap<usize, Node> {
-    let mut nodes = HashMap::new();
-    let rows = client.query(
-        "SELECT g.id, g.genome, f.score
-         FROM genomes g
-         LEFT JOIN fitness_scores f ON g.id = f.genome_id
-         WHERE g.generation_id = (SELECT id FROM generations WHERE generation_number = $1)",
-        &[&generation_number]
-    ).unwrap();
+pub fn create_database() -> Result<(), Error> {
+    dotenv().ok();
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-    for row in rows {
-        let genome: Vec<u8> = row.get("genome");
-        let fitness: f32 = row.get("score").unwrap_or(0.0);
-        let song = Song { genome, fitness };
-        nodes.entry(0).or_insert_with(|| Node { id: 0, capacity: 100, songs: Vec::new() }).songs.push(song);
-    }
+    let mut client = Client::connect(&database_url, NoTls)?;
 
-    nodes
-}
+    // Create the habitat table
+    client.batch_execute("
+        CREATE TABLE IF NOT EXISTS habitat (
+            node INT NOT NULL,
+            capacity INT NOT NULL
+        );
+    ")?;
 
-pub fn store_fitness_scores(client: &mut Client, fitness_scores: &HashMap<usize, Vec<f32>>) {
-    for (genome_id, scores) in fitness_scores {
-        for &score in scores {
-            client.execute(
-                "INSERT INTO fitness_scores (genome_id, score) VALUES ($1, $2)",
-                &[&genome_id, &score]
-            ).unwrap();
-        }
-    }
-}
+    // Create the songs table
+    client.batch_execute("
+        CREATE TABLE IF NOT EXISTS songs (
+            generation INT NOT NULL,
+            node INT NOT NULL,
+            song_id SERIAL PRIMARY KEY,
+            genome BYTEA NOT NULL
+        );
+    ")?;
 
-pub fn calculate_fitness_and_generate_next_generation(client: &mut Client, current_generation: i32) {
-    let next_generation = current_generation + 1;
+    // Create the current generation fitness table
+    client.batch_execute("
+        CREATE TABLE IF NOT EXISTS current_generation_fitness (
+            song_id INT NOT NULL REFERENCES songs(song_id),
+            rating INT NOT NULL,
+            timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+    ")?;
 
-    // Calculate fitness
-    let rows = client.query(
-        "SELECT g.id, AVG(f.score) as avg_score
-         FROM genomes g
-         JOIN fitness_scores f ON g.id = f.genome_id
-         WHERE g.generation_id = (SELECT id FROM generations WHERE generation_number = $1)
-         GROUP BY g.id",
-        &[&current_generation]
-    ).unwrap();
+    // Create the historic fitness score table
+    client.batch_execute("
+        CREATE TABLE IF NOT EXISTS historic_fitness_scores (
+            song_id INT NOT NULL REFERENCES songs(song_id),
+            sum_of_ratings INT NOT NULL
+        );
+    ")?;
 
-    let mut fitness_scores = HashMap::new();
-    for row in rows {
-        let genome_id: i32 = row.get("id");
-        let avg_score: f32 = row.get("avg_score");
-        fitness_scores.insert(genome_id as usize, avg_score);
-    }
-
-    // Generate next generation
-    let mut graph = Graph::new();
-    graph.calculate_fitness(&fitness_scores);
-    let migrations = graph.calculate_migrations();
-    graph.reproduce_songs(&migrations);
-
-    // Store next generation
-    client.execute(
-        "INSERT INTO generations (generation_number) VALUES ($1)",
-        &[&next_generation]
-    ).unwrap();
-    let generation_id: i32 = client.query_one(
-        "SELECT id FROM generations WHERE generation_number = $1",
-        &[&next_generation]
-    ).unwrap().get("id");
-
-    for node in graph.nodes.values() {
-        for song in &node.songs {
-            client.execute(
-                "INSERT INTO genomes (generation_id, genome, parent1_id, parent2_id) VALUES ($1, $2, NULL, NULL)",
-                &[&generation_id, &song.genome]
-            ).unwrap();
-        }
-    }
+    Ok(())
 }
