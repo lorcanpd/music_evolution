@@ -1,4 +1,4 @@
-use postgres::{Client, NoTls, Error};
+use postgres::{Client, NoTls, Error, GenericClient};
 use std::env;
 use dotenv::dotenv;
 
@@ -16,12 +16,23 @@ pub fn create_database() -> Result<(), Error> {
         );
     ")?;
 
+    // Create table of dispersal probabilities between nodes.
+    client.batch_execute(
+        "CREATE TABLE IF NOT EXISTS dispersal_probabilities (
+            from_node INT NOT NULL,
+            to_node INT NOT NULL,
+            probability FLOAT NOT NULL
+        );
+    ")?;
+
     // Create the songs table
     client.batch_execute("
         CREATE TABLE IF NOT EXISTS songs (
             generation INT NOT NULL,
             node INT NOT NULL,
             song_id SERIAL PRIMARY KEY,
+            parent1_id INT REFERENCES songs(song_id),
+            parent2_id INT REFERENCES songs(song_id),
             genome BYTEA NOT NULL
         );
     ")?;
@@ -45,3 +56,4 @@ pub fn create_database() -> Result<(), Error> {
 
     Ok(())
 }
+
