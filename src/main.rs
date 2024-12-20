@@ -18,12 +18,14 @@ fn main() {
 
     // Load current generation
     let current_generation = 1;
-    let nodes = database::load_current_generation(&mut client, current_generation);
+    let nodes = database::load_current_generation(
+        &mut client, current_generation);
 
     // Simulate rating process
     let mut fitness_scores: HashMap<usize, Vec<f32>> = HashMap::new();
     for (node_id, node) in &nodes {
-        let scores: Vec<f32> = node.songs.iter().map(|_| rand::thread_rng().gen_range(0.0..1.0)).collect();
+        let scores: Vec<f32> = node.songs.iter().map(|_| rand::thread_rng().gen_range(
+            0.0..1.0)).collect();
         fitness_scores.insert(*node_id, scores);
     }
 
