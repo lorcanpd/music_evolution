@@ -59,6 +59,7 @@ impl GenomeCrosser {
             reverb_codon: crossed_reverb_codon,
             echo_codon: crossed_echo_codon,
             mutation_rate: crossed_mutation_rate,
+            song_id: None,
         }
     }
 
@@ -138,7 +139,7 @@ impl GenomeCrosser {
         let value = bits.iter().rev().enumerate().fold(
             0, |acc, (i, &bit)| acc + (bit as usize * (1 << i))
         );
-        value as f64 / (255.0 * 5.0)
+        value as f64 / (255.0 * 15.0)
     }
 
     fn apply_mutation(chromosome: &mut Vec<u8>, mutation_rate: f64) {

@@ -1,37 +1,77 @@
+// src/main.rs
+use dotenv::dotenv;
+use std::env;
+use postgres::{Client, NoTls};
+use crate::initialise_experiment::{initialise_experiment, scrub_database};
+use crate::genome::Genome;
+use crate::decode_genome::DecodedGenome;
+use crate::play_genes::play_genes;
+
+mod initialise_experiment;
+mod database;
 mod genome;
+mod genome_crosser;
 mod decode_genome;
 mod play_genes;
-mod genome_crosser;
-mod graph;
-mod database;
 
-use genome::Genome;
-use decode_genome::DecodedGenome;
-use play_genes::play_genes;
-use genome_crosser::GenomeCrosser;
-use postgres::{Client, NoTls};
-use rand::Rng;
-use std::collections::HashMap;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Load environment variables from .env file
+    dotenv().ok();
 
-fn main() {
-    let mut client = Client::connect("host=localhost user=postgres", NoTls).unwrap();
+    // Retrieve the DATABASE_URL environment variable
+    let database_url = env::var("DATABASE_URL")?;
 
-    // Load current generation
-    let current_generation = 1;
-    let nodes = database::load_current_generation(
-        &mut client, current_generation);
+    // Attempt to connect to the PostgreSQL database
+    let mut client = Client::connect(&database_url, NoTls)?;
 
-    // Simulate rating process
-    let mut fitness_scores: HashMap<usize, Vec<f32>> = HashMap::new();
-    for (node_id, node) in &nodes {
-        let scores: Vec<f32> = node.songs.iter().map(|_| rand::thread_rng().gen_range(
-            0.0..1.0)).collect();
-        fitness_scores.insert(*node_id, scores);
+    // Check the connection by executing a simple query
+    client.batch_execute("SELECT 1")?;
+
+    println!("Successfully connected to the database and executed query.");
+
+    // Initialise the experiment
+    initialise_experiment()?;
+
+    println!("Experiment initialised.");
+
+    // Now let's play Adam and Eve and then all their children from generation 1.
+    // First, get the songs from the database.
+    // Then, decode the genome.
+    // Then, play the genome.
+
+    // Playing Adam (song_id = 1)
+    println!("Playing Adam");
+    let adam_request = client.query("SELECT genome FROM songs WHERE song_id = 1", &[])?;
+    for row in adam_request.iter() {
+        let genome: Genome = row.get("genome");
+        let decoded: DecodedGenome = DecodedGenome::decode(&genome);
+        play_genes(&decoded)?;
     }
 
-    // Store fitness scores
-    database::store_fitness_scores(&mut client, &fitness_scores);
+    // Playing Eve (song_id = 2)
+    println!("Playing Eve");
+    let eve_request = client.query("SELECT genome FROM songs WHERE song_id = 2", &[])?;
+    for row in eve_request.iter() {
+        let genome: Genome = row.get("genome");
+        let decoded: DecodedGenome = DecodedGenome::decode(&genome);
+        play_genes(&decoded)?;
+    }
 
-    // Calculate fitness and generate next generation
-    database::calculate_fitness_and_generate_next_generation(&mut client, current_generation);
+    // Playing children (generation = 1)
+    println!("Playing children");
+    let children_request = client.query("SELECT genome FROM songs WHERE generation = 1", &[])?;
+    for row in children_request.iter() {
+        let genome: Genome = row.get("genome");
+        let decoded: DecodedGenome = DecodedGenome::decode(&genome);
+        play_genes(&decoded)?;
+    }
+
+    println!("Test complete.");
+
+    // Scrub the database
+    scrub_database()?;
+
+    println!("Database scrubbed.");
+
+    Ok(())
 }
