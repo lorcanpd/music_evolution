@@ -102,11 +102,6 @@ pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
         // play the song
         println!("Playing song_id={}", song_id);
         play_precomputed_wav(song_id)?;
-        // for row in rows.iter() {
-        //     let genome: Genome = row.get("genome");
-        //     let decoded: DecodedGenome = DecodedGenome::decode(&genome);
-        //     play_genes(&decoded)?;
-        // }
 
         // 2. Prompt the user for a rating
         println!("Please rate song_id={} with a value between 1..5, or 'q' to quit:", song_id);
@@ -121,12 +116,22 @@ pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
         }
 
         // parse as i32
-        let rating: i32 = match input.parse() {
-            Ok(val @ 1..=5) => val,
-            _ => {
-                println!("Invalid rating. Please type a number between 1..5 or 'q'.");
-                continue;
+        let rating: i32 = loop {
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            let input = input.trim();
+
+            if input.eq_ignore_ascii_case("q") {
+                println!("Quitting rating early...");
+                return Ok(());
             }
+
+            match input.parse() {
+                Ok(val @ 1..=5) => break val,
+                _ => {
+                    println!("Invalid rating. Please type a number between 1..5 or 'q'.");
+                }
+            };
         };
 
         // 3. Store rating in current_generation_fitness
