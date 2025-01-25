@@ -176,3 +176,17 @@ fn apply_echo(samples: &mut Vec<f32>, delay: Duration, feedback: f32) {
         *sample = output;
     }
 }
+
+/// Quick playback of an existing WAV file from `current_generation/`.
+pub fn play_precomputed_wav(song_id: i32) -> Result<(), Box<dyn std::error::Error>> {
+    let filename = format!("current_generation/{}.wav", song_id);
+    let file = std::fs::File::open(&filename)?;
+    let source = rodio::Decoder::new(std::io::BufReader::new(file))?;
+
+    let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
+    let sink = rodio::Sink::try_new(&stream_handle)?;
+    sink.append(source);
+    sink.sleep_until_end();
+
+    Ok(())
+}

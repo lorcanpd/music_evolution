@@ -2,8 +2,12 @@
 use crate::database::{create_database, populate_habitat_tables};
 use crate::genome::Genome;
 use crate::genome_crosser::GenomeCrosser;
+use crate::decode_genome::DecodedGenome;
+use crate::play_genes;
 use postgres::{Client, NoTls};
 use std::error::Error;
+use std::fs;
+use std::path::Path;
 
 // import user_interaction
 use crate::user_interaction;
@@ -22,6 +26,32 @@ pub fn create_adam_and_eve() -> Result<(Genome, Genome), Box<dyn Error>> {
     let eve = adam.clone_genome();
 
     Ok((adam, eve))
+}
+
+fn store_current_generation_wavs(client: &mut Client) -> Result<(), Box<dyn Error>> {
+    // Create the folder if it doesn't exist
+    fs::create_dir_all("current_generation")?;
+
+    // Query whichever generation you want. For example: generation=1
+    // Or query them all: "SELECT song_id, genome FROM songs"
+    let rows = client.query("SELECT song_id, genome FROM songs WHERE generation=1", &[])?;
+
+    for row in rows {
+        let song_id: i32 = row.get("song_id");
+        let genome: Genome = row.get("genome");
+
+        // Decode the genome once
+        let decoded = DecodedGenome::decode(&genome);
+
+        // Create the filename
+        let filename = format!("current_generation/{}.wav", song_id);
+
+        // Generate and store the WAV file
+        play_genes::generate_wav(&decoded, &filename)?;
+        println!("Created WAV file for song_id={} at {}", song_id, filename);
+    }
+
+    Ok(())
 }
 
 // borrow the client and adam and eve genomes to create generation 1.
@@ -93,6 +123,8 @@ pub fn initialise_experiment() -> Result<(), Box<dyn Error>> {
     // Create generation 1
     create_generation_1(&mut client, &adam, &eve)?;
 
+    store_current_generation_wavs(&mut client)?;
+
     Ok(())
 }
 
@@ -110,5 +142,13 @@ pub fn scrub_database() -> Result<(), Box<dyn Error>> {
 
     transaction.commit()?;
     println!("Database scrubbed and sequences reset.");
+
+    // Also remove the folder
+    if Path::new("current_generation").exists() {
+        std::fs::remove_dir_all("current_generation")?;
+        println!("Removed current_generation folder.");
+    }
+
     Ok(())
 }
+

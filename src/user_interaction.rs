@@ -6,7 +6,8 @@ use postgres::{Client, NoTls};
 
 use crate::genome::Genome;
 use crate::decode_genome::DecodedGenome;
-use crate::play_genes::play_genes;
+// use crate::play_genes;
+use crate::play_genes::{play_genes, play_precomputed_wav};
 
 /// Prompt the user to accept or reject a randomly generated Adam genome.
 /// Returns the accepted Adam genome.
@@ -88,23 +89,24 @@ pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
 
         // pick a random song_id
         let song_id = song_ids[rng.gen_range(0..song_ids.len())];
-        let rows = client.query(
-            "SELECT song_id, genome FROM songs WHERE song_id = $1",
-            &[&song_id],
-        )?;
+        // let rows = client.query(
+        //     "SELECT song_id FROM songs WHERE song_id = $1",
+        //     &[&song_id],
+        // )?;
 
-        // if for some reason no row returned, continue
-        if rows.is_empty() {
-            continue;
-        }
+        // // if for some reason no row returned, continue
+        // if rows.is_empty() {
+        //     continue;
+        // }
 
         // play the song
         println!("Playing song_id={}", song_id);
-        for row in rows.iter() {
-            let genome: Genome = row.get("genome");
-            let decoded: DecodedGenome = DecodedGenome::decode(&genome);
-            play_genes(&decoded)?;
-        }
+        play_precomputed_wav(song_id)?;
+        // for row in rows.iter() {
+        //     let genome: Genome = row.get("genome");
+        //     let decoded: DecodedGenome = DecodedGenome::decode(&genome);
+        //     play_genes(&decoded)?;
+        // }
 
         // 2. Prompt the user for a rating
         println!("Please rate song_id={} with a value between 1..5, or 'q' to quit:", song_id);
