@@ -2,25 +2,26 @@
 use crate::database::{create_database, populate_habitat_tables};
 use crate::genome::Genome;
 use crate::genome_crosser::GenomeCrosser;
-
 use postgres::{Client, NoTls};
 use std::error::Error;
-use bytes::BytesMut;
-use postgres::types::Type;
 
-pub fn create_adam_and_eve() -> (Genome, Genome) {
-    let mut adam = Genome::initialise_random_genome(
-        128,
-        256,
-        8,
-        16,
-    );
+// import user_interaction
+use crate::user_interaction;
+
+pub fn create_adam_and_eve() -> Result<(Genome, Genome), Box<dyn Error>> {
+    // let mut adam = Genome::initialise_random_genome(
+    //     128,
+    //     256,
+    //     8,
+    //     16,
+    // );
+    let mut adam= user_interaction::choose_adam()?;
     // set adams mutation rate to 0.03 to give us a good chance of mutation
     adam.assign_mutation_rate(0.03);
     // copy adam to create eve
     let eve = adam.clone_genome();
 
-    (adam, eve)
+    Ok((adam, eve))
 }
 
 // borrow the client and adam and eve genomes to create generation 1.
@@ -28,7 +29,7 @@ pub fn create_generation_1(
     client: &mut Client,
     adam: &Genome,
     eve: &Genome
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let generation = 1;
 
     // Example: retrieve capacity from habitat
@@ -66,69 +67,48 @@ pub fn initialise_experiment() -> Result<(), Box<dyn Error>> {
     create_database()?;
     populate_habitat_tables()?;
 
-    let (mut adam, mut eve) = create_adam_and_eve();
+    let (mut adam, mut eve) = create_adam_and_eve()?;
 
     let database_url = std::env::var("DATABASE_URL")?;
     let mut client = Client::connect(&database_url, NoTls)?;
 
-    let row = client.query_one(
+    // Insert Adam
+    let adam_row = client.query_one(
         "INSERT INTO songs (generation, node, genome)
-        VALUES ($1, $2, $3)
-        RETURNING song_id",
-        &[&0, &0, &adam], // Just pass &adam
+         VALUES ($1, $2, $3) RETURNING song_id",
+        &[&0, &0, &adam],
     )?;
-    let adam_id: i32 = row.get(0);
-    adam.assign_song_id(adam_id as i32);
+    let adam_id: i32 = adam_row.get(0);
+    adam.assign_song_id(adam_id);
 
     // Insert Eve
-    let row = client.query_one(
+    let eve_row = client.query_one(
         "INSERT INTO songs (generation, node, genome)
-        VALUES ($1, $2, $3)
-        RETURNING song_id",
+         VALUES ($1, $2, $3) RETURNING song_id",
         &[&0, &0, &eve],
     )?;
-    let eve_id: i32 = row.get(0);
-    eve.assign_song_id(eve_id as i32);
+    let eve_id: i32 = eve_row.get(0);
+    eve.assign_song_id(eve_id);
 
     // Create generation 1
-    create_generation_1(&mut client, &adam, &eve)?;  // see next section
+    create_generation_1(&mut client, &adam, &eve)?;
 
     Ok(())
 }
 
-
-// function to scrub the songs from the database.
-pub fn scrub_songs() -> Result<(), Box<dyn Error>> {
-    let database_url = std::env::var("DATABASE_URL")?;
-    let mut client = Client::connect(&database_url, NoTls)?;
-
-    client.execute("DELETE FROM songs", &[])?;
-    Ok(())
-}
-
-
-// function to scrub the entire database. This will be used to reset the experiment.
 pub fn scrub_database() -> Result<(), Box<dyn Error>> {
-    // Retrieve the DATABASE_URL environment variable
+    // unchanged
     let database_url = std::env::var("DATABASE_URL")?;
-
-    // Connect to the PostgreSQL database
     let mut client = Client::connect(&database_url, NoTls)?;
-
-    // Start a transaction to ensure atomicity
     let mut transaction = client.transaction()?;
 
-    // Truncate tables with RESTART IDENTITY and CASCADE
     transaction.batch_execute("
-        TRUNCATE TABLE dispersal_probabilities, songs, current_generation_fitness, historic_fitness_scores, habitat
+        TRUNCATE TABLE dispersal_probabilities, songs, current_generation_fitness,
+        historic_fitness_scores, habitat
         RESTART IDENTITY CASCADE;
     ")?;
 
-    // Commit the transaction
     transaction.commit()?;
-
     println!("Database scrubbed and sequences reset.");
-
     Ok(())
 }
-
