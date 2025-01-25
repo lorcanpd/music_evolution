@@ -1,3 +1,4 @@
+// src/database.rs
 use postgres::{Client, NoTls, Error as PgError, GenericClient};
 use std::error::Error;
 
