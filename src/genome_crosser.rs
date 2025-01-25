@@ -135,11 +135,20 @@ impl GenomeCrosser {
         child
     }
 
+    // fn decode_mutation_rate(bits: &[u8]) -> f64 {
+    //     let value = bits.iter().rev().enumerate().fold(
+    //         0, |acc, (i, &bit)| acc + (bit as usize * (1 << i))
+    //     );
+    //     value as f64 / (255.0 * 10.0)
+    // }
     fn decode_mutation_rate(bits: &[u8]) -> f64 {
         let value = bits.iter().rev().enumerate().fold(
             0, |acc, (i, &bit)| acc + (bit as usize * (1 << i))
         );
-        value as f64 / (255.0 * 15.0)
+        let scaled_value = value as f64 / 255.0;
+        let lower_bound = 0.00125;
+        let upper_bound = 0.07;
+        lower_bound + scaled_value * (upper_bound - lower_bound)
     }
 
     fn apply_mutation(chromosome: &mut Vec<u8>, mutation_rate: f64) {

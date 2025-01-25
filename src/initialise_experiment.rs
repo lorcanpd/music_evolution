@@ -8,12 +8,14 @@ use bytes::BytesMut;
 use postgres::types::Type;
 
 pub fn create_adam_and_eve() -> (Genome, Genome) {
-    let adam = Genome::initialise_random_genome(
+    let mut adam = Genome::initialise_random_genome(
         128,
         256,
         8,
         16,
     );
+    // set adams mutation rate to 0.03 to give us a good chance of mutation
+    adam.assign_mutation_rate(0.03);
     // copy adam to create eve
     let eve = adam.clone_genome();
 

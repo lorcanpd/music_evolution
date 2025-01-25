@@ -42,6 +42,7 @@ impl Chromosome {
             right_chromosome,
         }
     }
+
 }
 
 pub struct Genome {
@@ -157,6 +158,29 @@ impl Genome {
     // Answer: Yes, using Some() is the best way to assign a song_id to the genome.
     pub fn assign_song_id(&mut self, song_id: i32) {
         self.song_id = Some(song_id);
+    }
+
+    pub fn assign_mutation_rate(&mut self, mutation_rate: f64) {
+        let lower_bound = 0.00125;
+        let upper_bound = 0.07;
+
+        // Ensure the mutation rate is within the bounds
+        let clamped_rate = mutation_rate.clamp(lower_bound, upper_bound);
+
+        // Normalize the mutation rate to the range [0, 1]
+        let normalized_rate = (clamped_rate - lower_bound) / (upper_bound - lower_bound);
+
+        // Scale to the range [0, 255] and round to the nearest integer
+        let scaled_value = (normalized_rate * 255.0).round() as u8;
+
+        // Convert the integer to a binary representation
+        let binary_representation = format!("{:08b}", scaled_value)
+            .chars()
+            .map(|c| c.to_digit(2).unwrap() as u8)
+            .collect::<Vec<u8>>();
+
+        // Set the binary representation as the mutation rate chromosome
+        self.mutation_rate = Chromosome::new(binary_representation.clone(), binary_representation);
     }
 }
 
