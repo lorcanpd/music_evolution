@@ -104,7 +104,7 @@ pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
         play_precomputed_wav(song_id)?;
 
         // 2. Prompt the user for a rating
-        println!("Please rate song_id={} with a value between 1..5, or 'q' to quit:", song_id);
+        println!("Do you like song {}? N/y or q to quit:", song_id);
 
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
@@ -119,18 +119,16 @@ pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
         let rating: i32 = loop {
             let mut input = String::new();
             std::io::stdin().read_line(&mut input)?;
-            let input = input.trim();
+            let input = input.trim().to_lowercase();
 
             if input.eq_ignore_ascii_case("q") {
                 println!("Quitting rating early...");
                 return Ok(());
             }
 
-            match input.parse() {
-                Ok(val @ 1..=5) => break val,
-                _ => {
-                    println!("Invalid rating. Please type a number between 1..5 or 'q'.");
-                }
+            match input.as_str() {
+                "y" => break 3,
+                "n" | _ => break 1,
             };
         };
 

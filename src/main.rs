@@ -1,3 +1,4 @@
+// src/main.rs
 use dotenv::dotenv;
 use std::env;
 use postgres::{Client, NoTls};
