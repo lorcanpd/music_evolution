@@ -17,7 +17,7 @@ pub fn choose_adam() -> Result<Genome, Box<dyn Error>> {
         let mut adam = Genome::initialise_random_genome(128, 256, 8, 16);
         adam.assign_mutation_rate(0.02);
 
-        println!("Generated a new Adam with random mutation rate. Accept this Adam? (y/n): ");
+        println!("Accept this Adam? (N/y): ");
         // play adam
         let decoded = DecodedGenome::decode(&adam);
         play_genes(&decoded)?;
@@ -30,14 +30,14 @@ pub fn choose_adam() -> Result<Genome, Box<dyn Error>> {
         io::stdin().read_line(&mut input)?;
         let input = input.trim().to_lowercase();
 
-        if input == "y" || input == "yes" {
-            println!("Adam accepted.");
-            return Ok(adam);
-        } else if input == "n" || input == "no" {
+        if input.is_empty() || input == "n" || input == "no" {
             println!("Generating a new Adam...");
             // loop continues, generating a new one
+        } else if input == "y" || input == "yes" {
+            println!("Adam accepted.");
+            return Ok(adam);
         } else {
-            println!("Please type 'y'/'yes' to approve or 'n'/'no' to reject.");
+            println!("Please type 'y' to approve or 'n' to reject.");
         }
     }
 }
@@ -47,7 +47,7 @@ pub fn choose_adam() -> Result<Genome, Box<dyn Error>> {
 ///
 /// - `rating_limit`: number of total ratings to collect before stopping.
 /// - After collecting `rating_limit` ratings, scrub the database (for now).
-pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
+pub fn rate_songs(rating_limit: i32) -> Result<(), Box<dyn Error>> {
     // Retrieve the DATABASE_URL environment variable
     let database_url = std::env::var("DATABASE_URL")?;
     let mut client = Client::connect(&database_url, NoTls)?;
@@ -55,7 +55,7 @@ pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
     let mut rng = rand::thread_rng();
     let mut ratings_collected = 0;
 
-    println!("Starting rating process. Type 1..5 for your rating, or 'q' to quit early.");
+    println!("Starting rating process. Press 'q' to quit early.");
 
     while ratings_collected < rating_limit {
         // // 1. Randomly pick a song from the 'songs' table
@@ -78,26 +78,8 @@ pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
             break;
         }
 
-
-
-        // // pick a random offset
-        // let offset = rng.gen_range(0..row_count) as i64;
-        // let rows = client.query(
-        //     "SELECT song_id, genome FROM songs OFFSET $1 LIMIT 1",
-        //     &[&offset],
-        // )?;
-
         // pick a random song_id
         let song_id = song_ids[rng.gen_range(0..song_ids.len())];
-        // let rows = client.query(
-        //     "SELECT song_id FROM songs WHERE song_id = $1",
-        //     &[&song_id],
-        // )?;
-
-        // // if for some reason no row returned, continue
-        // if rows.is_empty() {
-        //     continue;
-        // }
 
         // play the song
         println!("Playing song_id={}", song_id);
@@ -127,8 +109,8 @@ pub fn rate_songs(rating_limit: usize) -> Result<(), Box<dyn Error>> {
             }
 
             match input.as_str() {
-                "y" => break 3,
-                "n" | _ => break 1,
+                "y" => break 1,
+                "" | "n" | _ => break 0,
             };
         };
 

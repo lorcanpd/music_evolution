@@ -6,7 +6,7 @@ pub struct GenomeCrosser;
 
 impl GenomeCrosser {
     pub fn crossover(father: &Genome, mother: &Genome) -> Genome {
-        let mut rng = rand::thread_rng();
+        // let rng = rand::thread_rng();
 
         let mutation_rate_father = Self::decode_mutation_rate(
             &father.mutation_rate.get_left_chromosome()
@@ -167,7 +167,7 @@ impl GenomeCrosser {
             chromosome.insert(pos, rng.gen());
         }
 
-        if rng.gen_bool(indel_rate) {
+        if !chromosome.is_empty() && rng.gen_bool(indel_rate) {
             let pos = rng.gen_range(0..chromosome.len());
             chromosome.remove(pos);
         }
