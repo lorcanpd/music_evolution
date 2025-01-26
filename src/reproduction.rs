@@ -1,7 +1,8 @@
 // src/reproduction.rs
 use std::error::Error;
 use rand::Rng;
-use postgres::{Client, NoTls};
+// use postgres::{Client, NoTls};
+use tokio_postgres::{Client, NoTls, connect};
 
 use crate::genome::Genome;
 use crate::genome_crosser::GenomeCrosser;
@@ -14,26 +15,36 @@ use crate::play_genes; // for generate_wav
 /// 3. Determine migrations (which node the child goes to).
 /// 4. For each node capacity slot, pick parents proportionally to fitness (excluding the same parent).
 /// 5. Insert child into `songs` with next_generation, and generate new .wav in current_generation folder.
-pub fn differential_reproduction(
+pub async fn differential_reproduction(
     current_generation: i32,
     next_generation: i32,
 ) -> Result<(), Box<dyn Error>> {
 
     // 1. Connect to DB
     let database_url = std::env::var("DATABASE_URL")?;
-    let mut client = Client::connect(&database_url, NoTls)?;
+    let (mut client, connection) = connect(&database_url, NoTls).await?;
 
     // 2. Compute total rating per song
     //    Also retrieve node, so we can compute per-node sums
     let rows = client.query(
         "
-        SELECT s.song_id, s.node, SUM(f.rating) as total_rating
+        SELECT s.song_id, s.node, SUM(f.rating) + 1 as total_rating
         FROM songs s
         LEFT JOIN current_generation_fitness f ON s.song_id = f.song_id
         WHERE s.generation = $1
         GROUP BY s.song_id
         ",
-        &[&current_generation])?;
+        &[&current_generation]).await?;
+
+    // Add each songs fitness score to the historic_fitness_scores table
+    for row in rows.iter() {
+        let song_id: i32 = row.get("song_id");
+        let total_rating: i64 = row.get("total_rating");
+        client.execute(
+            "INSERT INTO historic_fitness_scores (song_id, sum_of_ratings) VALUES ($1, $2)",
+            &[&song_id, &total_rating],
+        ).await?;
+    }
 
     // Map: node -> Vec<(song_id, total_rating)>
     use std::collections::HashMap;
@@ -72,7 +83,7 @@ pub fn differential_reproduction(
     // For each node, use the to_node probabilities to determine which parents slots are to be
     // assigned to other nodes.
     let habitat_rows = client.query(
-        "SELECT node, capacity FROM habitat", &[])?;
+        "SELECT node, capacity FROM habitat", &[]).await?;
     let mut node_capacities = vec![];
     for row in habitat_rows {
         let node_id: i32 = row.get("node");
@@ -81,7 +92,7 @@ pub fn differential_reproduction(
     }
 
     let dispersal_rows = client.query(
-        "SELECT from_node, to_node, probability FROM dispersal_probabilities", &[])?;
+        "SELECT from_node, to_node, probability FROM dispersal_probabilities", &[]).await?;
     // get the total capacity of each node and then determine which of these are to be populated
     // for another node.
     // Dispersal probabilities are a hash map of hash maps, where the key is the from_node and the
@@ -142,10 +153,10 @@ pub fn differential_reproduction(
             // retrieve the actual genome from the DB
             let father_genome: Genome = client.query_one(
                 "SELECT genome FROM songs WHERE song_id=$1", &[&parent1_id]
-            )?.get("genome");
+            ).await?.get("genome");
             let mother_genome: Genome = client.query_one(
                 "SELECT genome FROM songs WHERE song_id=$1", &[&parent2_id]
-            )?.get("genome");
+            ).await?.get("genome");
 
             // crossover => child
             let child_genome = GenomeCrosser::crossover(&father_genome, &mother_genome);
@@ -162,7 +173,7 @@ pub fn differential_reproduction(
                     &parent1_id,
                     &parent2_id
                 ],
-            )?;
+            ).await?;
             let child_id: i32 = row.get(0);
 
             new_songs.push(child_id);
@@ -181,13 +192,16 @@ pub fn differential_reproduction(
     // or decode from the child's genome if you want
     for song_id in new_songs {
         let row = client.query_one(
-            "SELECT genome FROM songs WHERE song_id=$1", &[&song_id])?;
+            "SELECT genome FROM songs WHERE song_id=$1", &[&song_id]).await?;
         let genome: Genome = row.get("genome");
         let decoded = DecodedGenome::decode(&genome);
 
         let filename = format!("current_generation/{}.wav", song_id);
         play_genes::generate_wav(&decoded, &filename)?;
     }
+
+    // clear out the current_generation_fitness table
+    client.execute("DELETE FROM current_generation_fitness", &[]).await?;
 
     println!("Differential reproduction complete. Next generation = {}", next_generation);
     Ok(())
@@ -203,7 +217,7 @@ fn pick_parents(fits: &[(i32, f64)]) -> Result<(i32, i32), Box<dyn Error>> {
         .filter(|(id, _)| *id != parent1_id)
         .collect();
 
-    // re-normalize
+    // re-normalise
     let total: f64 = filtered.iter().map(|(_, w)| w).sum();
     if total > 0.0 {
         for (_, w) in &mut filtered {

@@ -1,7 +1,9 @@
 // src/main.rs
 use dotenv::dotenv;
 use std::env;
-use postgres::{Client, NoTls};
+// use postgres::{Client, NoTls};
+
+use tokio_postgres::{Client, NoTls, connect};
 
 use crate::initialise_experiment::{initialise_experiment, scrub_database};
 use crate::genome::Genome;
@@ -17,33 +19,35 @@ mod decode_genome;
 mod play_genes;
 mod user_interaction;
 mod reproduction;
+mod web_interface;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL")?;
-    let mut client = Client::connect(&database_url, NoTls)?;
+    let (mut client, connection) = connect(&database_url, NoTls).await?;
 
-    initialise_experiment()?;
+    initialise_experiment().await?;
     println!("Experiment initialised.");
 
     // get total number of songs possible using the habitat table. Use get to get the value from the
     // row in one go.
     let total_songs = client.query_one(
         "SELECT SUM(capacity) as total_songs FROM habitat",
-        &[])?;
+        &[]).await?;
     // let total_songs: i64 = total_songs.get("total_songs");
 
-    let total_songs = 8;
+    let total_songs = 4;
 
     loop {
         println!("We will sample and rate {} songs from the world.", total_songs);
-        user_interaction::rate_songs(total_songs as i32)?;
+        user_interaction::rate_songs(total_songs as i32).await?;
 
         // show the fitness scores table. Sum the fitness scores for each song.
         let fitness_scores = client.query(
             "SELECT song_id, SUM(rating) as total_rating \
         FROM current_generation_fitness GROUP BY song_id",
-            &[])?;
+            &[]).await?;
         for row in fitness_scores.iter() {
             let song_id: i32 = row.get("song_id");
             let rating: i64 = row.get("total_rating");
@@ -53,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // get current generation
         let mut current_generation = client.query_one(
             "SELECT MAX(generation) as curr_gen FROM songs",
-            &[])?.get::<_, i32>("curr_gen");
+            &[]).await?.get::<_, i32>("curr_gen");
 
         // produce the next generation
         reproduction::differential_reproduction(
@@ -67,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    scrub_database()?;
+    scrub_database().await?;
 
     Ok(())
 }

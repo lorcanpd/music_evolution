@@ -25,7 +25,7 @@ pub enum Effect {
 }
 
 #[derive(Clone)]
-enum WaveFunction {
+pub enum WaveFunction {
     Sine,
     Square,
     Custom,

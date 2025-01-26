@@ -1,4 +1,4 @@
-// src/decode_genome.rs
+// src/genome.rs
 use postgres::types::{FromSql, ToSql, Type, IsNull, accepts, to_sql_checked};
 // use postgres::error::Error;
 use std::fmt;
@@ -9,6 +9,7 @@ use rand::Rng;
 pub const PARAMETERS: usize = 5; // Frequency, Amplitude, Duration, Phase
 pub const BITS_PER_PARAMETER: usize = 8;
 
+#[derive(Clone)]
 pub struct Chromosome {
     left_chromosome: Vec<u8>,
     right_chromosome: Vec<u8>,
@@ -46,6 +47,7 @@ impl Chromosome {
 
 }
 
+#[derive(Clone)]
 pub struct Genome {
     pub notes: Chromosome,
     pub effects: Chromosome,
@@ -108,6 +110,7 @@ impl Genome {
     }
 
     // method to allow the genome to be cloned
+    // adapt to return box dyn
     pub fn clone_genome(&self) -> Genome {
         Genome {
             notes: Chromosome::new(
@@ -152,6 +155,7 @@ impl Genome {
             ),
             song_id: self.song_id,
         }
+
     }
 
     // method for assigning a song_id to the genome

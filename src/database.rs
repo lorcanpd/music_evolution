@@ -1,5 +1,8 @@
 // src/database.rs
-use postgres::{Client, NoTls, Error as PgError, GenericClient};
+// use postgres::{Client, NoTls, Error as PgError, GenericClient};
+// use tokio_postgres::Error as PgError;
+// use postgres::{Client, NoTls, Error as PgError, GenericClient};
+use tokio_postgres::{Client, NoTls, Error as PgError, connect};
 use std::error::Error;
 
 use std::env;
@@ -8,15 +11,22 @@ use dotenv::dotenv;
 use serde_json;
 use std::fs::File;
 use std::io::BufReader;
-use std::collections::HashMap;
+// use std::collections::HashMap;
 
 
 
-pub fn create_database() -> Result<(), PgError> {
+// pub async fn create_database() -> Result<(), PgError> {
+pub async fn create_database() -> Result<(), Box<dyn Error>> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-    let mut client = Client::connect(&database_url, NoTls)?;
+    let (mut client, connection) = connect(&database_url, NoTls).await?;
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {}", e);
+        }
+    });
 
     // Create the habitat table. Nodes cannot share the same ID. The capacity is the number of songs
     // that can be stored at each node.
@@ -25,10 +35,10 @@ pub fn create_database() -> Result<(), PgError> {
             node INT PRIMARY KEY,
             capacity INT NOT NULL
         );
-    ")?;
+    ").await?;
 
-    // Create table of dispersal probabilities between nodes. The from node is a node id from the
-    // habitat table. The to node is a node id from the habitat table. The probability is the
+    // Create table of dispersal probabilities between nodes. The 'from node' is a node id from the
+    // habitat table. The 'to node' is a node id from the habitat table. The probability is the
     // probability of a song dispersing from the from node to the to node. All to and from node
     // pairs must be unique.
     client.batch_execute(
@@ -37,7 +47,7 @@ pub fn create_database() -> Result<(), PgError> {
             to_node INT NOT NULL REFERENCES habitat(node),
             probability FLOAT NOT NULL
         );
-    ")?;
+    ").await?;
 
     // Create the songs table
     client.batch_execute("
@@ -49,7 +59,7 @@ pub fn create_database() -> Result<(), PgError> {
             parent2_id INT REFERENCES songs(song_id),
             genome BYTEA NOT NULL
         );
-    ")?;
+    ").await?;
 
     // Create the current generation fitness table
     client.batch_execute("
@@ -58,7 +68,7 @@ pub fn create_database() -> Result<(), PgError> {
             rating INT NOT NULL,
             timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
-    ")?;
+    ").await?;
 
     // Create the historic fitness score table
     client.batch_execute("
@@ -66,7 +76,7 @@ pub fn create_database() -> Result<(), PgError> {
             song_id INT NOT NULL REFERENCES songs(song_id),
             sum_of_ratings INT NOT NULL
         );
-    ")?;
+    ").await?;
 
     Ok(())
 }
@@ -91,10 +101,16 @@ struct HabitatEdge {
     probability: f64,
 }
 
-pub fn populate_habitat_tables() -> Result<(), Box<dyn Error>> {
+pub async fn populate_habitat_tables() -> Result<(), Box<dyn Error>> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let mut client = Client::connect(&database_url, NoTls)?;
+    let (client, connection) = connect(&database_url, NoTls).await?;
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {}", e);
+        }
+    });
 
     // Read the habitat configuration from a JSON file.
     let file = File::open("habitat_config.json")?;
@@ -107,16 +123,15 @@ pub fn populate_habitat_tables() -> Result<(), Box<dyn Error>> {
         client.execute(
             "INSERT INTO habitat (node, capacity) VALUES ($1, $2)",
             &[&node.id, &node.capacity],
-        )?;
+        ).await?;
     }
 
     // Insert edges
     for edge in &config.edges {
         client.execute(
-            "INSERT INTO dispersal_probabilities (from_node, to_node, probability)\
-            VALUES ($1, $2, $3)",
-            &[&edge.from_node, &edge.to_node, &edge.probability],
-        )?;
+            "INSERT INTO dispersal_probabilities (from_node, to_node, probability) VALUES ($1, $2, $3)",
+            &[&edge.from_node, &edge.to_node, &(edge.probability as f64)],
+        ).await?;
     }
 
     Ok(())
