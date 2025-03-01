@@ -17,6 +17,7 @@ maud = "0.26.0"
 lazy_static = "1.5.0"
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
+deadpool-postgres = "0.10"
 
 [[bin]]
 name = "web_server"

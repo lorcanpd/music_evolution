@@ -1,8 +1,9 @@
 // src/reproduction.rs
+
 use std::error::Error;
 use rand::Rng;
-// use postgres::{Client, NoTls};
-use tokio_postgres::{Client, NoTls, connect};
+use deadpool_postgres::Pool;
+use tokio_postgres::NoTls;
 
 use crate::genome::Genome;
 use crate::genome_crosser::GenomeCrosser;
@@ -18,11 +19,13 @@ use crate::play_genes; // for generate_wav
 pub async fn differential_reproduction(
     current_generation: i32,
     next_generation: i32,
+    pool: &Pool
 ) -> Result<(), Box<dyn Error>> {
 
     // 1. Connect to DB
-    let database_url = std::env::var("DATABASE_URL")?;
-    let (mut client, connection) = connect(&database_url, NoTls).await?;
+    // let database_url = std::env::var("DATABASE_URL")?;
+    // let (mut client, connection) = connect(&database_url, NoTls).await?;
+    let client = pool.get().await?;
 
     // 2. Compute total rating per song
     //    Also retrieve node, so we can compute per-node sums

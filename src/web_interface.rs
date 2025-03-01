@@ -1,39 +1,19 @@
 // src/web_interface.rs
 
-use dotenv::dotenv;
 use rocket::{get, routes, Route, State};
+use rocket::response::Redirect;
+use rocket::response::{content::RawHtml};
 use rocket::fs::NamedFile;
-use rocket::response::{content::RawHtml, Redirect};
-use rocket::http::Status;
-use std::path::Path;
-use std::io;
-use std::error::Error;
-use std::sync::Mutex;
-
-use tokio_postgres::{connect, Client as AsyncClient, NoTls};
-use crate::genome::Genome;
-use crate::initialise_experiment::{
-    scrub_database, create_generation_1,
-    store_current_generation_wavs
-};
+use deadpool_postgres::Pool;
+use crate::initialise_experiment::{create_generation_1, store_current_generation_wavs};
 use crate::reproduction::differential_reproduction;
-
 use crate::database::{create_database, populate_habitat_tables};
-
-use crate::user_interaction::{
-    get_choose_adam,
-    post_choose_adam,
-    get_rate_songs,
-    post_rate_songs,
-    AppState,
-};
-
+use crate::user_interaction::{get_choose_adam, post_choose_adam, get_rate_songs, post_rate_songs, AppState};
 use rocket::tokio::sync::broadcast::{self, Sender, error::RecvError};
 use rocket::response::stream::{Event, EventStream};
-// use rocket::serde::json::Json;
-// use rocket::State;
 use serde_json::json;
-
+use crate::genome::Genome;
+use std::path::Path;
 
 #[get("/ws")]
 pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
@@ -49,27 +29,20 @@ pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
     }
 }
 
-/// GET / => Main landing page. Checks if experiment is initialised:
-///  - If no Adam in the DB => redirect to /choose_adam
-///  - Otherwise => link to /rate_songs
+/// GET / => Main landing page.
 #[get("/")]
 pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
-    // Get the asynchronous client from the state
-    let client = &state.client;
+    let client = state.pool.get().await.map_err(|_| Redirect::to("/error"))?;
 
-    // Check if there's at least one song with generation=0, i.e. Adam
-    let row = client.query_one(
-        "SELECT COUNT(*) as count FROM songs WHERE generation=0",
-        &[]
-    ).await;
+    let row = client
+        .query_one("SELECT COUNT(*) as count FROM songs WHERE generation=0", &[])
+        .await;
     match row {
         Ok(r) => {
             let count: i64 = r.get("count");
             if count == 0 {
-                // no songs with generation=0 => redirect to /initialise_experiment
                 Err(Redirect::to("/initialise_experiment"))
             } else {
-                // Adam present => show a landing with a link to /rate_songs
                 let html = format!(r#"
                     <html>
                       <head><title>From beeps and boops, to beats and bops</title></head>
@@ -82,98 +55,74 @@ pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect>
                 Ok(RawHtml(html))
             }
         }
-        Err(_) => {
-            // Could not query => redirect or show error
-            Err(Redirect::to("/error"))
-        }
+        Err(_) => Err(Redirect::to("/error")),
     }
 }
 
-/// GET /initialise_experiment => Initialise the experiment:
-/// - Create the database tables
-/// - Populate the habitat table
-/// - Create Adam and Eve
-/// - Create the first generation
-/// - Store the .wav files for the first generation
-/// - Redirect to /rate_songs
-/// This is the first page the user sees when the experiment is not initialised.
-/// This is a long-running operation, so it is done in a separate route.
-/// This route is not part of the main routes, but is called from the main routes.
-
+/// GET /initialise_experiment
 #[get("/initialise_experiment")]
 pub async fn initialise_experiment_route(state: &State<AppState>) -> Result<Redirect, Redirect> {
-    // Get the asynchronous client from the state
-    let client = &state.client;
-
-    // Create the database tables
-    create_database().await.map_err(|_| Redirect::to("/error"))?;
-
-    // Populate the habitat table
-    populate_habitat_tables().await.map_err(|_| Redirect::to("/error"))?;
-
-    // Redirect to /rate_songs
+    create_database(&state.pool).await.map_err(|_| Redirect::to("/error"))?;
+    populate_habitat_tables(&state.pool).await.map_err(|_| Redirect::to("/error"))?;
     Ok(Redirect::to("/choose_adam"))
 }
 
 #[get("/create_first_generation")]
 async fn create_first_generation(state: &State<AppState>) -> Result<Redirect, Redirect> {
-    // Get the asynchronous client from the state
-    let client = &state.client;
+    let client = state.pool.get().await.map_err(|_| Redirect::to("/error"))?;
+    let adam: Genome = client
+        .query_one("SELECT genome FROM songs WHERE generation=0 and song_id=1", &[])
+        .await.map_err(|_| Redirect::to("/error"))?
+        .get("genome");
+    let eve: Genome = client
+        .query_one("SELECT genome FROM songs WHERE generation=0 and song_id=2", &[])
+        .await.map_err(|_| Redirect::to("/error"))?
+        .get("genome");
 
-    // Get adam from database
-    let adam: Genome = client.query_one(
-        "SELECT genome FROM songs WHERE generation=0 and song_id=1",
-        &[]
-    ).await.map_err(|_| Redirect::to("/error"))?.get("genome");
+    drop(client);
 
-    // Get eve from database
-    let eve: Genome = client.query_one(
-        "SELECT genome FROM songs WHERE generation=0 and song_id=2",
-        &[]
-    ).await.map_err(|_| Redirect::to("/error"))?.get("genome");
+    create_generation_1(&state.pool, &adam, &eve)
+        .await
+        .map_err(|_| Redirect::to("/error"))?;
+    store_current_generation_wavs(&state.pool)
+        .await
+        .map_err(|_| Redirect::to("/error"))?;
 
-    // Create the first generation
-    create_generation_1(client, &adam, &eve).await.map_err(|_| Redirect::to("/error"))?;
-
-    // Store the .wav files for the first generation
-    store_current_generation_wavs(client).await.map_err(|_| Redirect::to("/error"))?;
-
-    // Redirect to /
     Ok(Redirect::to("/"))
 }
 
 #[get("/creating_next_generation")]
-pub async fn creating_next_generation_page(state: &State<AppState>, notify_tx: &State<Sender<()>>) -> Result<RawHtml<&'static str>, Redirect> {
-    dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").map_err(|_| Redirect::to("/error"))?;
-    let (client, connection) = connect(&database_url, NoTls).await.map_err(|_| Redirect::to("/error"))?;
-
+pub async fn creating_next_generation_page(
+    state: &State<AppState>,
+    notify_tx: &State<Sender<()>>
+) -> Result<RawHtml<&'static str>, Redirect> {
+    let pool = state.pool.clone();
     let notify_tx_clone = notify_tx.inner().clone();
 
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
-
-    tokio::spawn(async move {
-        match client.query_one("SELECT MAX(generation) as curr_gen FROM songs", &[]).await {
-            Ok(row) => {
-                let current_generation: i32 = row.get("curr_gen");
-                println!("Current generation: {}", current_generation);
-
-                match differential_reproduction(current_generation, current_generation + 1).await {
-                    Ok(_) => {
-                        println!("Differential reproduction succeeded");
-                        let _ = notify_tx_clone.send(());
+    rocket::tokio::spawn(async move {
+        match pool.get().await {
+            Ok(client) => {
+                match client.query_one("SELECT MAX(generation) as curr_gen FROM songs", &[]).await {
+                    Ok(row) => {
+                        let current_generation: i32 = row.get("curr_gen");
+                        println!("Current generation: {}", current_generation);
+                        match differential_reproduction(current_generation, current_generation + 1, &pool).await {
+                            Ok(_) => {
+                                println!("Differential reproduction succeeded");
+                                let _ = notify_tx_clone.send(());
+                            }
+                            Err(e) => {
+                                eprintln!("Differential reproduction error: {}", e);
+                            }
+                        }
                     }
                     Err(e) => {
-                        eprintln!("Differential reproduction error: {}", e);
+                        eprintln!("Query error: {}", e);
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Query error: {}", e);
+                eprintln!("Failed to get DB client: {}", e);
             }
         }
     });
@@ -191,41 +140,37 @@ pub async fn creating_next_generation_page(state: &State<AppState>, notify_tx: &
     "#))
 }
 
-// New generation just tells the user that the new generation has been created, and links them to /rate_songs
 #[get("/new_generation")]
 async fn new_generation() -> RawHtml<&'static str> {
     RawHtml("<h1>New generation created</h1><p><a href='/rate_songs'>Rate the new songs</a></p>")
 }
 
-/// GET /temp_adam.wav => serve the file "temp_adam.wav" from disk
-/// This is used by the user_interaction code to let user listen to the random Adam.
+/// GET /temp_adam.wav
 #[get("/temp_adam.wav")]
 pub async fn get_temp_adam_wav() -> Option<NamedFile> {
     NamedFile::open(Path::new("temp_adam.wav")).await.ok()
 }
 
-/// GET /song_wav/<id> => serve the .wav file for a particular song from current_generation/
+/// GET /song_wav/<id>
 #[get("/song_wav/<song_id>")]
 pub async fn get_song_wav(song_id: i32) -> Option<NamedFile> {
     let filename = format!("current_generation/{}.wav", song_id);
     NamedFile::open(Path::new(&filename)).await.ok()
 }
 
-/// GET /error => a simple error page
+/// GET /error
 #[get("/error")]
 pub fn error_page() -> RawHtml<&'static str> {
     RawHtml("<h1>Something went wrong</h1>")
 }
 
-
-/// Combine all routes in one function
+/// Combine all routes
 pub fn routes() -> Vec<Route> {
     routes![
         index,
         get_temp_adam_wav,
         get_song_wav,
         error_page,
-        // from user_interaction:
         initialise_experiment_route,
         get_choose_adam,
         post_choose_adam,

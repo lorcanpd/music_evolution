@@ -1,32 +1,17 @@
 // src/database.rs
-// use postgres::{Client, NoTls, Error as PgError, GenericClient};
-// use tokio_postgres::Error as PgError;
-// use postgres::{Client, NoTls, Error as PgError, GenericClient};
-use tokio_postgres::{Client, NoTls, Error as PgError, connect};
+
+use deadpool_postgres::Pool;
+use tokio_postgres::NoTls;
 use std::error::Error;
-
-use std::env;
 use dotenv::dotenv;
-
 use serde_json;
 use std::fs::File;
 use std::io::BufReader;
-// use std::collections::HashMap;
-
-
 
 // pub async fn create_database() -> Result<(), PgError> {
-pub async fn create_database() -> Result<(), Box<dyn Error>> {
-    dotenv().ok();
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+pub async fn create_database(pool: &Pool) -> Result<(), Box<dyn Error>> {
 
-    let (mut client, connection) = connect(&database_url, NoTls).await?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
+    let client = pool.get().await?;
 
     // Create the habitat table. Nodes cannot share the same ID. The capacity is the number of songs
     // that can be stored at each node.
@@ -81,7 +66,6 @@ pub async fn create_database() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-
 #[derive(serde::Deserialize)]
 struct HabitatConfig {
     nodes: Vec<HabitatNode>,
@@ -101,17 +85,8 @@ struct HabitatEdge {
     probability: f64,
 }
 
-pub async fn populate_habitat_tables() -> Result<(), Box<dyn Error>> {
-    dotenv().ok();
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let (client, connection) = connect(&database_url, NoTls).await?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
-
+pub async fn populate_habitat_tables(pool: &Pool) -> Result<(), Box<dyn Error>> {
+    let client = pool.get().await?;
     // Read the habitat configuration from a JSON file.
     let file = File::open("habitat_config.json")?;
     let reader = BufReader::new(file);
