@@ -16,6 +16,7 @@ use music_evo::user_interaction::AppState;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 #[launch]
 async fn rocket() -> _ {
@@ -47,6 +48,7 @@ async fn rocket() -> _ {
         .manage(AppState {
             pool,
             audio_cache: RwLock::new(HashMap::new()),
+            reproduction_in_progress: Arc::new(AtomicBool::new(false)),
         })
         .manage(notify_tx)
         .mount("/", web_interface::routes())

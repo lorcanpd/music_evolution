@@ -18,7 +18,7 @@ use std::path::Path;
 use tokio::fs;
 use std::sync::Arc;
 use crate::play_genes::BinaryContent;
-
+use std::sync::atomic::Ordering;
 #[get("/ws")]
 pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
     let mut rx = notify_tx.subscribe();
@@ -100,7 +100,11 @@ pub async fn creating_next_generation_page(
     state: &State<AppState>,
     notify_tx: &State<Sender<()>>
 ) -> Result<RawHtml<&'static str>, Redirect> {
+
+    state.reproduction_in_progress.store(true, Ordering::SeqCst);
+
     let pool = state.pool.clone();
+    let reproduction_flag = state.reproduction_in_progress.clone();
     let notify_tx_clone = notify_tx.inner().clone();
 
     rocket::tokio::spawn(async move {
@@ -114,9 +118,11 @@ pub async fn creating_next_generation_page(
                             Ok(_) => {
                                 println!("Differential reproduction succeeded");
                                 let _ = notify_tx_clone.send(());
+                                reproduction_flag.store(false, Ordering::SeqCst);
                             }
                             Err(e) => {
                                 eprintln!("Differential reproduction error: {}", e);
+                                reproduction_flag.store(false, Ordering::SeqCst);
                             }
                         }
                     }
@@ -188,6 +194,11 @@ pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<Binar
     }
 }
 
+#[get("/reproduction_message")]
+pub fn reproduction_message() -> RawHtml<&'static str> {
+    RawHtml("<h1>Reproduction in progress</h1><p>Please wait while the new generation is being created.</p>")
+}
+
 /// GET /error
 #[get("/error")]
 pub fn error_page() -> RawHtml<&'static str> {
@@ -209,6 +220,7 @@ pub fn routes() -> Vec<Route> {
         post_rate_songs,
         creating_next_generation_page,
         new_generation,
-        ws
+        ws,
+        reproduction_message
     ]
 }

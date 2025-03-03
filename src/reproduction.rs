@@ -42,12 +42,13 @@ pub async fn differential_reproduction(
     // Add each songs fitness score to the historic_fitness_scores table
     for row in rows.iter() {
         let song_id: i32 = row.get("song_id");
-        let total_rating: i64 = row.get("total_rating");
+        let total_rating: i64 = row.get::<_, Option<i64>>("total_rating").unwrap_or(0);
         client.execute(
             "INSERT INTO historic_fitness_scores (song_id, sum_of_ratings) VALUES ($1, $2)",
-            &[&song_id, &total_rating],
+            &[&song_id, &(total_rating as i32)],
         ).await?;
     }
+
 
     // Map: node -> Vec<(song_id, total_rating)>
     use std::collections::HashMap;

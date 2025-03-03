@@ -14,6 +14,7 @@ use tokio::sync::RwLock;
 use std::sync::Arc;
 use std::io;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::genome::Genome;
 use crate::decode_genome::DecodedGenome;
@@ -30,6 +31,7 @@ lazy_static! {
 pub struct AppState {
     pub pool: Pool,
     pub audio_cache: RwLock<HashMap<i32, Arc<Vec<u8>>>>,
+    pub reproduction_in_progress: Arc<AtomicBool>,
 }
 
 
@@ -187,13 +189,15 @@ pub async fn post_choose_adam(
 // GET /rate_songs
 // ------------------------------------------
 #[get("/rate_songs")]
-pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, status::Custom<String>> {
-    let client = state.pool.get().await.map_err(|e| {
-        status::Custom(
-            rocket::http::Status::InternalServerError,
-            format!("Failed to get DB connection: {}", e)
-        )
-    })?;
+pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
+
+    if state.reproduction_in_progress.load(Ordering::SeqCst) {
+        return Err(Redirect::to("/reproduction_message"));
+    }
+
+    let client = state.pool.get().await.map_err(
+        |e| Redirect::to(format!("/error?msg={}", e)))?;
+
     let song_id: i32 = {
         let row = client.query_one(
             "SELECT song_id FROM songs
@@ -202,10 +206,7 @@ pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, 
              LIMIT 1",
             &[]
         ).await.map_err(|e| {
-            status::Custom(
-                rocket::http::Status::InternalServerError,
-                format!("Failed to get random song: {}", e)
-            )
+            Redirect::to(format!("/error?msg={}", e))
         })?;
         row.get("song_id")
     };
@@ -239,6 +240,11 @@ pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, 
 pub async fn post_rate_songs(
     state: &State<AppState>, form_data: Form<RatingForm>
 ) -> Result<Redirect, status::Custom<String>> {
+
+    if state.reproduction_in_progress.load(Ordering::SeqCst) {
+        return Ok(Redirect::to("/reproduction_message"));
+    }
+
     let song_id = form_data.song_id;
     let rating = form_data.rating;
 
@@ -406,3 +412,6 @@ pub async fn rate_songs(state: &State<AppState>, rating_limit: i32) -> Result<()
 
     Ok(())
 }
+
+
+
