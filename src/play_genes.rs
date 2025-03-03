@@ -5,6 +5,11 @@ use std::f32::consts::PI;
 use std::time::Duration;
 use hound; // Added for WAV file writing
 
+use rocket::http::ContentType;
+use rocket::response::{Responder, Response};
+use rocket::Request;
+use std::io::Cursor;
+
 use crate::decode_genome::{DecodedGenome, Effect};
 
 /// Plays the decoded genome using `rodio` for debugging purposes.
@@ -189,4 +194,16 @@ pub fn play_precomputed_wav(song_id: i32) -> Result<(), Box<dyn std::error::Erro
     sink.sleep_until_end();
 
     Ok(())
+}
+
+
+pub struct BinaryContent(pub Vec<u8>);
+
+impl<'r> Responder<'r, 'static> for BinaryContent {
+    fn respond_to(self, _req: &'r Request<'_>) -> rocket::response::Result<'static> {
+        Response::build()
+            .header(ContentType::new("audio", "wav"))
+            .sized_body(self.0.len(), Cursor::new(self.0))
+            .ok()
+    }
 }

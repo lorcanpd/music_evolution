@@ -13,6 +13,9 @@ use deadpool_postgres::{Config as DpPgConfig, Pool, Runtime};
 use tokio_postgres::{NoTls, Config as PgClientConfig};
 use music_evo::web_interface;
 use music_evo::user_interaction::AppState;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+use std::sync::Arc;
 
 #[launch]
 async fn rocket() -> _ {
@@ -41,7 +44,10 @@ async fn rocket() -> _ {
     let (notify_tx, _) = broadcast::channel::<()>(10);
 
     rocket::build()
-        .manage(AppState { pool })
+        .manage(AppState {
+            pool,
+            audio_cache: RwLock::new(HashMap::new()),
+        })
         .manage(notify_tx)
         .mount("/", web_interface::routes())
 }

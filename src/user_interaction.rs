@@ -9,8 +9,12 @@ use rocket::form::{Form, FromForm};
 use rocket::response::{Redirect, content::RawHtml, status};
 use maud::{html, Markup};
 use deadpool_postgres::Pool;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+use std::sync::Arc;
 use std::io;
 use std::sync::Mutex;
+
 use crate::genome::Genome;
 use crate::decode_genome::DecodedGenome;
 use crate::play_genes::{generate_wav, play_genes, play_precomputed_wav};
@@ -24,7 +28,8 @@ lazy_static! {
 }
 
 pub struct AppState {
-    pub pool: Pool, // CHANGED: Now holds a deadpool Postgres pool
+    pub pool: Pool,
+    pub audio_cache: RwLock<HashMap<i32, Arc<Vec<u8>>>>,
 }
 
 

@@ -15,6 +15,10 @@ use serde_json::json;
 use crate::genome::Genome;
 use std::path::Path;
 
+use tokio::fs;
+use std::sync::Arc;
+use crate::play_genes::BinaryContent;
+
 #[get("/ws")]
 pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
     let mut rx = notify_tx.subscribe();
@@ -152,10 +156,36 @@ pub async fn get_temp_adam_wav() -> Option<NamedFile> {
 }
 
 /// GET /song_wav/<id>
+// #[get("/song_wav/<song_id>")]
+// pub async fn get_song_wav(song_id: i32) -> Option<NamedFile> {
+//     let filename = format!("current_generation/{}.wav", song_id);
+//     NamedFile::open(Path::new(&filename)).await.ok()
+// }
+
 #[get("/song_wav/<song_id>")]
-pub async fn get_song_wav(song_id: i32) -> Option<NamedFile> {
+pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<BinaryContent> {
+    // First, try to get the data from the in-memory cache.
+    {
+        let cache = state.audio_cache.read().await;
+        if let Some(audio) = cache.get(&song_id) {
+            return Some(BinaryContent((**audio).clone()));
+        }
+    }
+    // If not cached, load the file asynchronously.
     let filename = format!("current_generation/{}.wav", song_id);
-    NamedFile::open(Path::new(&filename)).await.ok()
+    match fs::read(&filename).await {
+        Ok(data) => {
+            // Cache the data.
+            let arc_data = Arc::new(data.clone());
+            let mut cache = state.audio_cache.write().await;
+            cache.insert(song_id, arc_data);
+            Some(BinaryContent(data))
+        },
+        Err(e) => {
+            eprintln!("Error loading {}: {}", filename, e);
+            None
+        }
+    }
 }
 
 /// GET /error
