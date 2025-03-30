@@ -13,6 +13,7 @@ use deadpool_postgres::{Config as DpPgConfig, Pool, Runtime};
 use tokio_postgres::{NoTls, Config as PgClientConfig};
 use music_evo::web_interface;
 use music_evo::user_interaction::AppState;
+use music_evo::task_queue::{TaskQueue, run_task_queue, run_threshold_checker};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use std::sync::Arc;
@@ -24,6 +25,7 @@ async fn rocket() -> _ {
     let database_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set");
 
+    // Parse the database URL and configure Deadpool.
     let client_config: PgClientConfig = database_url.parse().expect("Invalid DB URL");
     let mut pg_cfg = DpPgConfig::new();
     pg_cfg.host = client_config.get_hosts().get(0).and_then(|host| {
@@ -42,16 +44,55 @@ async fn rocket() -> _ {
         .create_pool(Some(Runtime::Tokio1), NoTls)
         .expect("Error creating pool");
 
+    // Create a broadcast channel for notifications.
     let (notify_tx, _) = broadcast::channel::<()>(10);
 
+    // Create the task queue (sender and receiver).
+    let (task_queue_sender, task_queue_rx) = TaskQueue::new(100);
+
+    // Build the AppState, embedding the task queue sender.
+    let app_state = AppState {
+        pool: pool.clone(),
+        audio_cache: RwLock::new(HashMap::new()),
+        reproduction_in_progress: Arc::new(AtomicBool::new(false)),
+        first_gen_created: Arc::new(AtomicBool::new(false)),
+        task_queue: task_queue_sender, // Store the sender for enqueuing tasks.
+    };
+
+    // Build Rocket and attach an on-liftoff fairing to spawn the task queue worker.
     rocket::build()
-        .manage(AppState {
-            pool,
-            audio_cache: RwLock::new(HashMap::new()),
-            reproduction_in_progress: Arc::new(AtomicBool::new(false)),
-        })
+        .manage(app_state)
         .manage(notify_tx)
         .mount("/", web_interface::routes())
+        // Spawn the task queue worker on Rocket's liftoff.
+        .attach(AdHoc::on_liftoff("TaskQueue Worker", move |rocket| {
+            // Capture the task queue receiver.
+            let task_queue_rx = task_queue_rx;
+            // Get the necessary state for the worker.
+            let pool = rocket.state::<AppState>().unwrap().pool.clone();
+            let reproduction_flag = rocket.state::<AppState>().unwrap().reproduction_in_progress.clone();
+            let notify_tx = rocket.state::<broadcast::Sender<()>>().unwrap().clone();
+            Box::pin(async move {
+                // Spawn a background worker task that runs indefinitely.
+                rocket::tokio::spawn(async move {
+                    run_task_queue(task_queue_rx, pool, reproduction_flag, notify_tx).await;
+                });
+            })
+        }))
+    // Add this likkle threshold checker to spawn on liftoff
+        // Spawn the threshold checker worker.
+        .attach(AdHoc::on_liftoff("Threshold Checker", move |rocket| {
+            let pool = rocket.state::<AppState>().unwrap().pool.clone();
+            let reproduction_flag = rocket.state::<AppState>().unwrap().reproduction_in_progress.clone();
+            let first_gen_created = rocket.state::<AppState>().unwrap().first_gen_created.clone();
+            // We use the same TaskQueue sender stored in AppState.
+            let task_queue = rocket.state::<AppState>().unwrap().task_queue.clone();
+            Box::pin(async move {
+                rocket::tokio::spawn(async move {
+                    run_threshold_checker(
+                        pool, reproduction_flag, first_gen_created, task_queue
+                    ).await;
+                });
+            })
+        }))
 }
-
-

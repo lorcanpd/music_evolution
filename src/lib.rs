@@ -8,3 +8,4 @@ pub mod initialise_experiment;
 pub mod web_interface;
 pub mod genome_crosser;
 pub mod reproduction;
+pub mod task_queue;

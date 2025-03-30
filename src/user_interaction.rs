@@ -15,10 +15,11 @@ use std::sync::Arc;
 use std::io;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-
+// use music_evo::task_queue::TaskQueue;
 use crate::genome::Genome;
 use crate::decode_genome::DecodedGenome;
 use crate::play_genes::{generate_wav, play_genes, play_precomputed_wav};
+use crate::task_queue::{Task, TaskQueue};
 
 
 // ------------------------------------------
@@ -32,6 +33,8 @@ pub struct AppState {
     pub pool: Pool,
     pub audio_cache: RwLock<HashMap<i32, Arc<Vec<u8>>>>,
     pub reproduction_in_progress: Arc<AtomicBool>,
+    pub first_gen_created: Arc<AtomicBool>,
+    pub task_queue: TaskQueue
 }
 
 
@@ -240,51 +243,19 @@ pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, 
 pub async fn post_rate_songs(
     state: &State<AppState>, form_data: Form<RatingForm>
 ) -> Result<Redirect, status::Custom<String>> {
-
     if state.reproduction_in_progress.load(Ordering::SeqCst) {
         return Ok(Redirect::to("/reproduction_message"));
     }
-
     let song_id = form_data.song_id;
     let rating = form_data.rating;
-
-    let client = state.pool.get().await.map_err(|e| {
-        status::Custom(
+    // Instead of inserting directly into the DB, enqueue the rating task.
+    if let Err(e) = state.task_queue.sender.send(Task::Rating { song_id, rating }).await {
+        return Err(status::Custom(
             rocket::http::Status::InternalServerError,
-            format!("Failed to get DB connection: {}", e)
-        )
-    })?;
-
-    match client.execute(
-        "INSERT INTO current_generation_fitness (song_id, rating)
-         VALUES ($1, $2)",
-        &[&song_id, &rating],
-    ).await {
-        Ok(_) => {
-            println!("Rating inserted for song_id={}", song_id);
-        }
-        Err(e) => {
-            return Err(status::Custom(
-                rocket::http::Status::InternalServerError,
-                format!("Failed to insert rating: {}", e)
-            ));
-        }
+            format!("Failed to enqueue rating task: {}", e)
+        ));
     }
-
-    let total_songs: i64 = 4;  // placeholder
-    let total_ratings: i64 = client.query_one(
-        "SELECT COUNT(*) as count FROM current_generation_fitness",
-        &[]
-    ).await.map_err(|e| {
-        status::Custom(
-            rocket::http::Status::InternalServerError,
-            format!("Failed to get total ratings: {}", e)
-        )
-    })?.get("count");
-
-    if total_ratings >= total_songs {
-        return Ok(Redirect::to("/creating_next_generation"));
-    }
+    println!("Enqueued rating for song {} with rating {}", song_id, rating);
 
     Ok(Redirect::to("/rate_songs"))
 }

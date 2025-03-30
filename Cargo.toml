@@ -30,5 +30,3 @@ path = "src/bin/init_experiment.rs"
 [[bin]]
 name = "scrub_db"
 path = "src/bin/scrub_db.rs"
-
-
