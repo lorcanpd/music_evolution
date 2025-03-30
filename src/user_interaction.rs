@@ -246,17 +246,15 @@ pub async fn post_rate_songs(
     if state.reproduction_in_progress.load(Ordering::SeqCst) {
         return Ok(Redirect::to("/reproduction_message"));
     }
-    let song_id = form_data.song_id;
-    let rating = form_data.rating;
-    // Instead of inserting directly into the DB, enqueue the rating task.
-    if let Err(e) = state.task_queue.sender.send(Task::Rating { song_id, rating }).await {
-        return Err(status::Custom(
-            rocket::http::Status::InternalServerError,
-            format!("Failed to enqueue rating task: {}", e)
-        ));
-    }
-    println!("Enqueued rating for song {} with rating {}", song_id, rating);
-
+    // Enqueue the rating task instead of directly updating the DB.
+    state.task_queue.sender.send(Task::Rating {
+        song_id: form_data.song_id,
+        rating: form_data.rating,
+    }).await.map_err(|e| {
+        status::Custom(rocket::http::Status::InternalServerError,
+                       format!("Failed to enqueue rating task: {}", e))
+    })?;
+    println!("Enqueued rating for song {} with rating {}", form_data.song_id, form_data.rating);
     Ok(Redirect::to("/rate_songs"))
 }
 
@@ -289,100 +287,46 @@ pub fn choose_adam() -> Result<Genome, Box<dyn Error>> {
     }
 }
 
-/// Randomly sample and rate songs until rating_limit ratings are collected.
-/// CHANGED: Return type now uses status::Custom<String> for errors.
-pub async fn rate_songs(state: &State<AppState>, rating_limit: i32) -> Result<(), status::Custom<String>> {
-    let client = state.pool.get().await.map_err(|e| {
-        status::Custom(
-            rocket::http::Status::InternalServerError,
-            format!("Failed to get DB connection: {}", e)
-        )
-    })?;
-
-    let mut rng = rand::thread_rng();
-    let mut ratings_collected = 0;
-
-    println!("Starting rating process. Press 'q' to quit early.");
-
-    while ratings_collected < rating_limit {
-        let song_ids_rows = client.query(
-            "SELECT song_id FROM songs WHERE generation = (SELECT MAX(generation) FROM songs)",
-            &[]
-        ).await.map_err(|e| {
-            status::Custom(
-                rocket::http::Status::InternalServerError,
-                format!("Failed to query songs: {}", e)
-            )
-        })?;
-
-        let song_ids: Vec<i32> = song_ids_rows.iter().map(|row| row.get("song_id")).collect();
-        if song_ids.is_empty() {
-            println!("No songs in the database. Exiting...");
-            break;
-        }
-
-        let song_id = song_ids[rng.gen_range(0..song_ids.len())];
-
-        println!("Playing song_id={}", song_id);
-        play_precomputed_wav(song_id).map_err(|e| {
-            status::Custom(
-                rocket::http::Status::InternalServerError,
-                format!("Failed to play song: {}", e)
-            )
-        })?;
-
-        println!("Do you like song {}? N/y or q to quit:", song_id);
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).map_err(|e| {
-            status::Custom(
-                rocket::http::Status::InternalServerError,
-                format!("Failed to read input: {}", e)
-            )
-        })?;
-        let input = input.trim();
-
-        if input.eq_ignore_ascii_case("q") {
-            println!("Quitting rating early...");
-            break;
-        }
-
-        let rating: i32 = loop {
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).map_err(|e| {
-                status::Custom(
-                    rocket::http::Status::InternalServerError,
-                    format!("Failed to read input: {}", e)
-                )
-            })?;
-            let input = input.trim().to_lowercase();
-
-            if input.eq_ignore_ascii_case("q") {
-                println!("Quitting rating early...");
-                return Ok(());
-            }
-            match input.as_str() {
-                "y" => break 1,
-                "" | "n" | _ => break 0,
-            };
-        };
-
-        client.execute(
-            "INSERT INTO current_generation_fitness (song_id, rating)
-             VALUES ($1, $2)",
-            &[&song_id, &rating],
-        ).await.map_err(|e| {
-            status::Custom(
-                rocket::http::Status::InternalServerError,
-                format!("Failed to insert rating: {}", e)
-            )
-        })?;
-
-        ratings_collected += 1;
-        println!("Recorded rating for song {}, total ratings = {}", song_id, ratings_collected);
+#[get("/rate_songs")]
+pub async fn rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
+    if state.reproduction_in_progress.load(Ordering::SeqCst) {
+        return Err(Redirect::to("/reproduction_message"));
     }
+    // Get a connection and sample a random song ID.
+    let client = state.pool.get().await.map_err(|_| Redirect::to("/error"))?;
+    let row = client
+        .query_one(
+            "SELECT song_id FROM songs
+             WHERE generation = (SELECT MAX(generation) FROM songs)
+             ORDER BY RANDOM() LIMIT 1",
+            &[],
+        )
+        .await
+        .map_err(|_| Redirect::to("/error"))?;
+    let song_id: i32 = row.get("song_id");
 
-    Ok(())
+    // Build the HTML form to rate the song.
+    let markup: Markup = html! {
+        html {
+            head { title { "Rate a Song" } }
+            body {
+                h1 { "Rate Song" }
+                p { "Listen to the song below and rate it." }
+                audio controls {
+                    source src=(format!("/song_wav/{}", song_id)) type="audio/wav";
+                    "Your browser does not support the audio element."
+                }
+                form action="/rate_songs" method="post" {
+                    input type="hidden" name="song_id" value=(song_id);
+                    // A simple button-based form – you could later enhance this to use radio buttons or another widget.
+                    button type="submit" name="rating" value="1" { "Yes" }
+                    button type="submit" name="rating" value="0" { "No" }
+                }
+            }
+        }
+    };
+
+    Ok(RawHtml(markup.into_string()))
 }
-
 
 
