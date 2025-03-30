@@ -14,10 +14,13 @@ use tokio_postgres::{NoTls, Config as PgClientConfig};
 use music_evo::web_interface;
 use music_evo::user_interaction::AppState;
 use music_evo::task_queue::{TaskQueue, run_task_queue, run_threshold_checker};
+use music_evo::song_queue::{SongQueue, run_song_queue};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use tokio::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
 
 #[launch]
 async fn rocket() -> _ {
@@ -47,8 +50,12 @@ async fn rocket() -> _ {
     // Create a broadcast channel for notifications.
     let (notify_tx, _) = broadcast::channel::<()>(10);
 
-    // Create the task queue (sender and receiver).
+    // Create the task queue.
     let (task_queue_sender, task_queue_rx) = TaskQueue::new(100);
+    // Create the song queue.
+    let (song_queue_sender, song_queue_rx) = tokio::sync::mpsc::channel(100);
+
+    let song_queue_receiver = Arc::new(Mutex::new(song_queue_rx));
 
     // Build the AppState, embedding the task queue sender.
     let app_state = AppState {
@@ -57,6 +64,8 @@ async fn rocket() -> _ {
         reproduction_in_progress: Arc::new(AtomicBool::new(false)),
         first_gen_created: Arc::new(AtomicBool::new(false)),
         task_queue: task_queue_sender, // Store the sender for enqueuing tasks.
+        song_queue_sender: SongQueue {sender: song_queue_sender, count: Arc::new(AtomicUsize::new(0))}, // Store the sender for song queue.
+        song_queue_receiver: song_queue_receiver.clone(), // Store the receiver for processing songs.
     };
 
     // Build Rocket and attach an on-liftoff fairing to spawn the task queue worker.
@@ -72,15 +81,18 @@ async fn rocket() -> _ {
             let pool = rocket.state::<AppState>().unwrap().pool.clone();
             let reproduction_flag = rocket.state::<AppState>().unwrap().reproduction_in_progress.clone();
             let notify_tx = rocket.state::<broadcast::Sender<()>>().unwrap().clone();
+            let song_queue_receiver = rocket.state::<AppState>().unwrap().song_queue_receiver.clone();
+
             Box::pin(async move {
                 // Spawn a background worker task that runs indefinitely.
                 rocket::tokio::spawn(async move {
-                    run_task_queue(task_queue_rx, pool, reproduction_flag, notify_tx).await;
+                    run_task_queue(
+                        task_queue_rx, pool, reproduction_flag, notify_tx, song_queue_receiver
+                    ).await;
                 });
             })
         }))
-    // Add this likkle threshold checker to spawn on liftoff
-        // Spawn the threshold checker worker.
+        // Add this likkle threshold checker to spawn on liftoff.
         .attach(AdHoc::on_liftoff("Threshold Checker", move |rocket| {
             let pool = rocket.state::<AppState>().unwrap().pool.clone();
             let reproduction_flag = rocket.state::<AppState>().unwrap().reproduction_in_progress.clone();
@@ -95,4 +107,17 @@ async fn rocket() -> _ {
                 });
             })
         }))
+        // Spawn the song queue worker.
+        .attach(AdHoc::on_liftoff("SongQueue Worker", move |rocket| {
+            let pool = rocket.state::<AppState>().unwrap().pool.clone();
+            let reproduction_flag = rocket.state::<AppState>().unwrap().reproduction_in_progress.clone();
+            let first_gen_created = rocket.state::<AppState>().unwrap().first_gen_created.clone();
+            let song_queue = rocket.state::<AppState>().unwrap().song_queue_sender.clone();
+            Box::pin(async move {
+                rocket::tokio::spawn(async move {
+                    run_song_queue(pool, reproduction_flag, first_gen_created, song_queue, 100).await;
+                });
+            })
+        }))
+
 }

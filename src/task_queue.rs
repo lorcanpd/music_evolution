@@ -5,6 +5,7 @@ use std::error::Error;
 use rocket::tokio::sync::broadcast::Sender as BroadcastSender;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 use crate::reproduction::differential_reproduction;
 
@@ -35,6 +36,7 @@ pub async fn run_task_queue(
     pool: Pool,
     reproduction_flag: Arc<AtomicBool>,
     notify_tx: BroadcastSender<()>,
+    song_queue_receiver: Arc<Mutex<Receiver<i32>>>,
 ) {
     while let Some(task) = rx.recv().await {
         match task {
@@ -51,7 +53,9 @@ pub async fn run_task_queue(
                     }
                 }
                 // Process reproduction.
-                if let Err(e) = process_reproduction(&pool, &notify_tx, &reproduction_flag).await {
+                if let Err(e) = process_reproduction(
+                    &pool, &notify_tx, &reproduction_flag, &song_queue_receiver
+                ).await {
                     eprintln!("Reproduction task error: {}", e);
                 }
             }
@@ -63,6 +67,7 @@ async fn process_reproduction(
     pool: &Pool,
     notify_tx: &BroadcastSender<()>,
     reproduction_flag: &Arc<AtomicBool>,
+    song_queue_receiver: &Arc<Mutex<Receiver<i32>>>,
 ) -> Result<(), Box<dyn Error>> {
     let client = pool.get().await?;
     let row = client
@@ -73,6 +78,17 @@ async fn process_reproduction(
     differential_reproduction(current_generation, current_generation + 1, pool).await?;
     reproduction_flag.store(false, Ordering::SeqCst);
     let _ = notify_tx.send(());
+
+    // Flush the song queue: lock the receiver and drain any pending song IDs.
+    {
+        let mut rx_lock = song_queue_receiver.lock().await;
+        while let Ok(_value) = rx_lock.try_recv() {
+            // We don't need the values; just draining.
+            eprintln!("Dropping pending rating task due to reproduction trigger");
+        }
+        println!("Song queue flushed after reproduction.");
+    }
+
     Ok(())
 }
 

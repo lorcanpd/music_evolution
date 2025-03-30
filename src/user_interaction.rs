@@ -13,20 +13,23 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use std::io;
-use std::sync::Mutex;
+
+use tokio::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 // use music_evo::task_queue::TaskQueue;
 use crate::genome::Genome;
 use crate::decode_genome::DecodedGenome;
 use crate::play_genes::{generate_wav, play_genes, play_precomputed_wav};
 use crate::task_queue::{Task, TaskQueue};
+use crate::song_queue::SongQueue;
+use tokio::sync::mpsc::Receiver;
 
 
 // ------------------------------------------
 // GLOBAL STATIC to store the "Adam" we last generated
 // ------------------------------------------
 lazy_static! {
-    static ref CURRENT_ADAM: Mutex<Option<Genome>> = Mutex::new(None);
+    static ref CURRENT_ADAM: Arc<Mutex<Option<Genome>>> = Arc::new(Mutex::new(None::<Genome>));
 }
 
 pub struct AppState {
@@ -34,7 +37,10 @@ pub struct AppState {
     pub audio_cache: RwLock<HashMap<i32, Arc<Vec<u8>>>>,
     pub reproduction_in_progress: Arc<AtomicBool>,
     pub first_gen_created: Arc<AtomicBool>,
-    pub task_queue: TaskQueue
+    pub task_queue: TaskQueue,
+    pub song_queue_sender: SongQueue,
+    pub song_queue_receiver: Arc<Mutex<Receiver<i32>>>,
+
 }
 
 
@@ -55,16 +61,21 @@ pub struct RatingForm {
 // GET /choose_adam
 // ------------------------------------------
 #[get("/choose_adam")]
-pub fn get_choose_adam(state: &State<AppState>) -> Result<RawHtml<String>, status::Custom<String>> {
+pub async fn get_choose_adam(state: &State<AppState>) -> Result<RawHtml<String>, status::Custom<String>> {
     // 1. Generate random Adam
-    let mut adam = Genome::initialise_random_genome(128, 256, 8, 16);
-    let mut rng = rand::thread_rng();
-    let mutation = rng.gen_range(0.00125..0.07);
+    let mut adam = Genome::initialise_random_genome(
+        128, 256, 8, 16
+    );
+    let mutation = {
+        let mut rng = rand::thread_rng();
+        rng.gen_range(0.00125..0.07)
+    };
     adam.assign_mutation_rate(mutation);
 
     // 2. Store in the global static
     {
-        let mut lock = CURRENT_ADAM.lock().unwrap();
+        let mut lock = CURRENT_ADAM.lock().await;
+        // let mut lock = CURRENT_ADAM.lock().await;
         *lock = Some(adam.clone_genome());
     }
 
@@ -115,7 +126,7 @@ pub async fn post_choose_adam(
     }
 
     let adam_opt = {
-        let lock = CURRENT_ADAM.lock().unwrap();
+        let lock = CURRENT_ADAM.lock().await;
         lock.clone()
     };
     let mut adam = match adam_opt {
@@ -181,7 +192,8 @@ pub async fn post_choose_adam(
     }
 
     {
-        let mut lock = CURRENT_ADAM.lock().unwrap();
+        let mut lock = CURRENT_ADAM.lock().await;
+        // let mut lock = CURRENT_ADAM.lock().await;
         *lock = None;
     }
 
@@ -193,28 +205,22 @@ pub async fn post_choose_adam(
 // ------------------------------------------
 #[get("/rate_songs")]
 pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
-
     if state.reproduction_in_progress.load(Ordering::SeqCst) {
         return Err(Redirect::to("/reproduction_message"));
     }
-
-    let client = state.pool.get().await.map_err(
-        |e| Redirect::to(format!("/error?msg={}", e)))?;
-
-    let song_id: i32 = {
-        let row = client.query_one(
-            "SELECT song_id FROM songs
-             WHERE generation = (SELECT MAX(generation) FROM songs)
-             ORDER BY RANDOM()
-             LIMIT 1",
-            &[]
-        ).await.map_err(|e| {
-            Redirect::to(format!("/error?msg={}", e))
+    // Await a song ID from the pre‑fetched song queue.
+    let song_id = {
+        let mut rx = state.song_queue_receiver.lock().await;
+        let song = rx.recv().await.ok_or_else(|| {
+            eprintln!("Song queue closed unexpectedly.");
+            Redirect::to("/error")
         })?;
-        row.get("song_id")
+        // Notify the song queue that one song was consumed.
+        state.song_queue_sender.song_consumed();
+        song
     };
 
-    let markup: Markup = html! {
+    let markup = maud::html! {
         html {
             head { title { "Rate a Song" } }
             body {
@@ -232,7 +238,6 @@ pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, 
             }
         }
     };
-
     Ok(RawHtml(markup.into_string()))
 }
 

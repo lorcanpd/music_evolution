@@ -9,3 +9,4 @@ pub mod web_interface;
 pub mod genome_crosser;
 pub mod reproduction;
 pub mod task_queue;
+pub mod song_queue;
