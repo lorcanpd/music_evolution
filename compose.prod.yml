@@ -1,0 +1,68 @@
+# Docker Compose Production Override for martin (Raspberry Pi 5)
+# Usage: docker compose -f docker-compose.yml -f compose.prod.yml up -d
+#
+# This override:
+# - Uses NVMe storage paths (/srv/services/music-evo/...)
+# - Enables TLS via Nginx
+# - Enables production mode (reproduction via external job runner)
+# - Mounts shared NFS paths for WAV files and job status
+
+services:
+  # ==========================================================================
+  # PostgreSQL Database - Production Settings
+  # ==========================================================================
+  postgres:
+    volumes:
+      # Store database on NVMe SSD
+      - /srv/services/music-evo/postgres:/var/lib/postgresql/data
+    environment:
+      # Use stronger password from environment
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-musicevo}
+    # Expose postgres port to host for job runner access
+    # Only bind to localhost for security
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  # ==========================================================================
+  # Music Evolution Web Application - Production Settings
+  # ==========================================================================
+  app:
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-musicevo}
+      ROCKET_ADDRESS: "0.0.0.0"
+      ROCKET_PORT: "8000"
+      ROCKET_LOG_LEVEL: "critical"
+      # Enable production mode - reproduction handled by external job runner
+      PRODUCTION_MODE: "true"
+      # Status file path (on NFS, written by job runner)
+      REPRODUCTION_STATUS_FILE: "/srv/shared/jobs/music-evo/current_status.json"
+    volumes:
+      # WAV output directory - on NFS, shared with workers
+      # Workers write here, app reads from here
+      - /srv/shared/music-evo/current_generation:/app/current_generation
+      # Access to shared NFS mount (for job status files)
+      - /srv/shared/jobs/music-evo:/srv/shared/jobs/music-evo:ro
+      # Habitat config
+      - /srv/services/music-evo/config/habitat_config.json:/app/habitat_config.json:ro
+      # Static files
+      - /srv/services/music-evo/static:/app/static:ro
+
+  # ==========================================================================
+  # Nginx Reverse Proxy - Production with TLS
+  # ==========================================================================
+  proxy:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /srv/services/music-evo/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /srv/services/music-evo/nginx/conf.d:/etc/nginx/conf.d:ro
+      # TLS certificates (from Let's Encrypt or similar)
+      - /srv/services/music-evo/certs:/etc/nginx/certs:ro
+      # ACME challenge directory for Let's Encrypt
+      - /srv/services/music-evo/acme-challenge:/var/www/acme-challenge:ro
+
+# Production doesn't use named volumes - uses bind mounts to NVMe/NFS
+volumes: {}
