@@ -1,0 +1,221 @@
+#!/bin/bash
+# =============================================================================
+# Music Evolution Job Runner
+# =============================================================================
+# This script runs on the host (martin) as the musicevo user.
+# It checks if reproduction is needed and submits a Slurm job if so.
+#
+# Called by: systemd timer (music-evo-jobrunner.timer)
+# User: musicevo (UID 2001)
+#
+# Configuration: /etc/music-evo/jobrunner.env
+# =============================================================================
+
+set -euo pipefail
+
+# Load configuration
+CONFIG_FILE="${CONFIG_FILE:-/etc/music-evo/jobrunner.env}"
+if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+fi
+
+# Configuration with defaults
+REPRO_INTERVAL_SECONDS="${REPRO_INTERVAL_SECONDS:-300}"  # 5 minutes default
+JOBS_DIR="${JOBS_DIR:-/srv/shared/jobs/music-evo}"
+LOCK_FILE="${JOBS_DIR}/repro.lock"
+STATUS_FILE="${JOBS_DIR}/current_status.json"
+LAST_RUN_FILE="${JOBS_DIR}/last_run"
+DATABASE_URL="${DATABASE_URL:-}"
+WAV_DIR="${WAV_DIR:-/srv/shared/music-evo/current_generation}"
+SLURM_PARTITION="${SLURM_PARTITION:-musicevo}"
+SBATCH_SCRIPT="${SBATCH_SCRIPT:-/srv/services/music-evo/scripts/run-reproduction.sbatch}"
+LOG_DIR="${JOBS_DIR}/logs"
+
+# Logging helper
+log() {
+    echo "[$(date -Iseconds)] $*" >&2
+}
+
+# Check if we should run based on interval
+should_run_based_on_interval() {
+    if [[ ! -f "$LAST_RUN_FILE" ]]; then
+        return 0  # Never run before
+    fi
+
+    local last_run
+    last_run=$(cat "$LAST_RUN_FILE")
+    local now
+    now=$(date +%s)
+    local elapsed=$((now - last_run))
+
+    if [[ $elapsed -ge $REPRO_INTERVAL_SECONDS ]]; then
+        return 0  # Enough time has passed
+    else
+        log "Interval not reached: ${elapsed}s elapsed, need ${REPRO_INTERVAL_SECONDS}s"
+        return 1
+    fi
+}
+
+# Acquire lock (single-flight)
+acquire_lock() {
+    exec 200>"$LOCK_FILE"
+    if ! flock -n 200; then
+        log "Another job runner instance is already running (lock held)"
+        return 1
+    fi
+    echo $$ > "$LOCK_FILE"
+    return 0
+}
+
+# Update status file
+write_status() {
+    local status="$1"
+    local message="${2:-}"
+    local job_id="${3:-null}"
+    local current_gen="${4:-null}"
+    local next_gen="${5:-null}"
+
+    cat > "$STATUS_FILE" <<EOF
+{
+    "status": "$status",
+    "message": "$message",
+    "job_id": $job_id,
+    "current_generation": $current_gen,
+    "next_generation": $next_gen,
+    "timestamp": "$(date -Iseconds)",
+    "last_check": "$(date -Iseconds)"
+}
+EOF
+}
+
+# Get current generation from database
+get_current_generation() {
+    if [[ -z "$DATABASE_URL" ]]; then
+        log "ERROR: DATABASE_URL not set"
+        return 1
+    fi
+
+    local result
+    result=$(psql "$DATABASE_URL" -t -A -c "SELECT COALESCE(MAX(generation), 0) FROM songs" 2>&1)
+    if [[ $? -ne 0 ]]; then
+        log "ERROR: Failed to query database: $result"
+        return 1
+    fi
+
+    echo "$result"
+}
+
+# Check if there are songs to reproduce (generation > 0)
+has_songs_to_reproduce() {
+    local current_gen
+    current_gen=$(get_current_generation) || return 1
+
+    if [[ "$current_gen" -lt 1 ]]; then
+        log "No songs to reproduce (current generation: $current_gen)"
+        return 1
+    fi
+
+    return 0
+}
+
+# Check if a Slurm job is already running
+is_job_running() {
+    # Check if there's a pending/running job for music-evo
+    local running
+    running=$(squeue -u musicevo -n music-evo-repro -h -o "%j" 2>/dev/null | head -1)
+
+    if [[ -n "$running" ]]; then
+        log "Job already running or queued"
+        return 0
+    fi
+    return 1
+}
+
+# Submit the reproduction job
+submit_job() {
+    local current_gen
+    current_gen=$(get_current_generation) || return 1
+    local next_gen=$((current_gen + 1))
+
+    log "Submitting reproduction job: generation $current_gen -> $next_gen"
+
+    # Create log directory
+    mkdir -p "$LOG_DIR"
+
+    # Submit the job
+    local job_output
+    job_output=$(sbatch \
+        --partition="$SLURM_PARTITION" \
+        --job-name="music-evo-repro" \
+        --output="$LOG_DIR/repro-%j.out" \
+        --error="$LOG_DIR/repro-%j.err" \
+        --export=ALL,DATABASE_URL="$DATABASE_URL",CURRENT_GEN="$current_gen",NEXT_GEN="$next_gen",WAV_DIR="$WAV_DIR" \
+        "$SBATCH_SCRIPT" 2>&1)
+
+    local sbatch_exit=$?
+    if [[ $sbatch_exit -ne 0 ]]; then
+        log "ERROR: sbatch failed: $job_output"
+        write_status "error" "Failed to submit job: $job_output"
+        return 1
+    fi
+
+    # Extract job ID
+    local job_id
+    job_id=$(echo "$job_output" | grep -oP 'Submitted batch job \K\d+' || echo "")
+
+    if [[ -z "$job_id" ]]; then
+        log "ERROR: Could not parse job ID from: $job_output"
+        write_status "error" "Could not parse job ID"
+        return 1
+    fi
+
+    log "Job submitted successfully: $job_id"
+
+    # Update status
+    write_status "queued" "Job submitted" "$job_id" "$current_gen" "$next_gen"
+
+    # Record run time
+    date +%s > "$LAST_RUN_FILE"
+
+    return 0
+}
+
+# Main logic
+main() {
+    # Ensure directories exist
+    mkdir -p "$JOBS_DIR" "$LOG_DIR"
+
+    # Try to acquire lock
+    if ! acquire_lock; then
+        exit 0  # Another instance running, exit gracefully
+    fi
+
+    # Check interval
+    if ! should_run_based_on_interval; then
+        exit 0
+    fi
+
+    # Check if there are songs
+    if ! has_songs_to_reproduce; then
+        write_status "idle" "No songs to reproduce yet"
+        exit 0
+    fi
+
+    # Check if job already running
+    if is_job_running; then
+        write_status "running" "Job already in progress"
+        exit 0
+    fi
+
+    # Submit job
+    if submit_job; then
+        log "Job runner completed successfully"
+    else
+        log "Job runner failed"
+        exit 1
+    fi
+}
+
+# Run
+main "$@"

@@ -14,11 +14,48 @@ use rocket::tokio::sync::broadcast::{self, Sender, error::RecvError};
 use rocket::response::stream::{Event, EventStream};
 use serde_json::json;
 use crate::genome::Genome;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use std::sync::Arc;
 use crate::play_genes::BinaryContent;
 use std::sync::atomic::Ordering;
+use maud::{html, Markup, PreEscaped, DOCTYPE};
+
+/// Base HTML layout with consistent styling
+fn base_layout(title: &str, content: Markup) -> Markup {
+    html! {
+        (DOCTYPE)
+        html lang="en" data-theme="dark" {
+            head {
+                meta charset="utf-8";
+                meta name="viewport" content="width=device-width, initial-scale=1";
+                title { (title) " | Music Evolution" }
+                // Pico.css for base styling
+                link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css";
+                // Custom styles
+                link rel="stylesheet" href="/static/style.css";
+            }
+            body {
+                main class="container" {
+                    header {
+                        h1 { "Music Evolution" }
+                        p class="subtitle" { "From beeps and boops, to beats and bops" }
+                    }
+                    (content)
+                    footer {
+                        p { "An evolutionary music experiment" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Serve static files
+#[get("/static/<file..>")]
+pub async fn static_files(file: PathBuf) -> Option<NamedFile> {
+    NamedFile::open(Path::new("static/").join(file)).await.ok()
+}
 
 #[get("/ws")]
 pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
@@ -38,29 +75,83 @@ pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
 #[get("/")]
 pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
     let client = state.pool.get().await.map_err(|_| Redirect::to("/error"))?;
-    let row = client
+
+    // Check if experiment is initialized
+    let init_row = client
         .query_one("SELECT COUNT(*) as count FROM songs WHERE generation=0", &[])
         .await;
-    match row {
+
+    match init_row {
         Ok(r) => {
             let count: i64 = r.get("count");
             if count == 0 {
-                Err(Redirect::to("/initialise_experiment"))
-            } else {
-                let html = format!(r#"
-                    <html>
-                      <head><title>From beeps and boops, to beats and bops</title></head>
-                      <body>
-                        <h1>Welcome to the Experiment</h1>
-                        <p>You can <a href="/rate_songs">rate songs</a> to create the selection gradient.</p>
-                      </body>
-                    </html>
-                "#);
-                Ok(RawHtml(html))
+                return Err(Redirect::to("/initialise_experiment"));
             }
         }
-        Err(_) => Err(Redirect::to("/error")),
+        Err(_) => return Err(Redirect::to("/error")),
     }
+
+    // Get current generation stats
+    let stats = client
+        .query_one(
+            "SELECT MAX(generation) as gen, COUNT(*) as songs FROM songs WHERE generation = (SELECT MAX(generation) FROM songs)",
+            &[],
+        )
+        .await
+        .ok();
+
+    let (current_gen, song_count) = stats
+        .map(|r| (r.get::<_, Option<i32>>("gen").unwrap_or(0), r.get::<_, i64>("songs")))
+        .unwrap_or((0, 0));
+
+    // Get rating count
+    let rating_count: i64 = client
+        .query_one("SELECT COUNT(*) as count FROM current_generation_fitness", &[])
+        .await
+        .map(|r| r.get("count"))
+        .unwrap_or(0);
+
+    let is_reproducing = state.reproduction_in_progress.load(Ordering::SeqCst);
+
+    let content = html! {
+        article class="card" {
+            h2 { "Welcome, Listener" }
+            p {
+                "This is an evolutionary music experiment. Songs evolve based on your ratings. "
+                "Listen to songs and vote on which ones sound good to you. "
+                "The best songs will reproduce to create the next generation."
+            }
+
+            div class="generation-info" {
+                div class="generation-stat" {
+                    span class="value" { (current_gen) }
+                    span class="label" { "Generation" }
+                }
+                div class="generation-stat" {
+                    span class="value" { (song_count) }
+                    span class="label" { "Songs" }
+                }
+                div class="generation-stat" {
+                    span class="value" { (rating_count) }
+                    span class="label" { "Ratings" }
+                }
+            }
+
+            @if is_reproducing {
+                div class="message message-info" {
+                    span class="status status-running pulse" { "Creating next generation..." }
+                }
+            }
+
+            div class="btn-group" {
+                a href="/rate_songs" role="button" class="btn btn-primary" {
+                    "Start Rating Songs"
+                }
+            }
+        }
+    };
+
+    Ok(RawHtml(base_layout("Home", content).into_string()))
 }
 
 /// GET /initialise_experiment
@@ -102,32 +193,147 @@ async fn create_first_generation(state: &State<AppState>) -> Result<Redirect, Re
 #[get("/creating_next_generation")]
 pub async fn creating_next_generation_page(
     state: &State<AppState>,
-) -> Result<RawHtml<&'static str>, Redirect> {
-    // Set the reproduction flag.
-    state.reproduction_in_progress.store(true, Ordering::SeqCst);
+) -> Result<RawHtml<String>, Redirect> {
+    if state.production_mode {
+        // In production mode, reproduction is handled by external job runner.
+        // Display status and poll for updates.
+        let content = html! {
+            article class="card" {
+                h2 { "Evolution Scheduled" }
+                div class="spinner" {}
+                p style="text-align: center;" {
+                    "The next generation will be created by the background job runner."
+                }
+                div id="status-container" class="message message-info" {
+                    p { "Checking status..." }
+                }
+                p style="text-align: center; color: var(--text-muted);" {
+                    "This page will automatically update when a new generation is available."
+                }
+                div class="btn-group" {
+                    a href="/" role="button" class="btn btn-secondary" {
+                        "Back to Home"
+                    }
+                }
+            }
+            script {
+                (PreEscaped(r#"
+                    async function checkStatus() {
+                        try {
+                            const response = await fetch('/reproduction_status');
+                            const data = await response.json();
+                            const container = document.getElementById('status-container');
 
-    // Enqueue a reproduction task using the task_queue stored in AppState.
-    if let Err(e) = state.task_queue.sender.send(Task::Reproduction).await {
-        eprintln!("Failed to enqueue reproduction task: {}", e);
-        return Err(Redirect::to("/error"));
+                            if (data.status === 'completed') {
+                                window.location.href = '/new_generation';
+                            } else if (data.status === 'running' || data.status === 'queued') {
+                                container.innerHTML = '<p>Status: ' + data.status + '</p>';
+                                if (data.job_id) {
+                                    container.innerHTML += '<p>Job ID: ' + data.job_id + '</p>';
+                                }
+                            } else if (data.status === 'failed') {
+                                container.className = 'message message-error';
+                                container.innerHTML = '<p>Reproduction failed: ' + (data.message || 'Unknown error') + '</p>';
+                            } else {
+                                container.innerHTML = '<p>Status: ' + (data.status || 'idle') + '</p>';
+                            }
+                        } catch (e) {
+                            console.error('Failed to check status:', e);
+                        }
+                    }
+
+                    // Check immediately and every 5 seconds
+                    checkStatus();
+                    setInterval(checkStatus, 5000);
+                "#))
+            }
+        };
+        Ok(RawHtml(base_layout("Evolution Scheduled", content).into_string()))
+    } else {
+        // Development mode: trigger reproduction directly
+        state.reproduction_in_progress.store(true, Ordering::SeqCst);
+
+        // Enqueue a reproduction task using the task_queue stored in AppState.
+        if let Err(e) = state.task_queue.sender.send(Task::Reproduction).await {
+            eprintln!("Failed to enqueue reproduction task: {}", e);
+            return Err(Redirect::to("/error"));
+        }
+
+        let content = html! {
+            article class="card" {
+                h2 { "Evolution in Progress" }
+                div class="spinner" {}
+                p class="pulse" style="text-align: center;" {
+                    "The songs are reproducing to create the next generation..."
+                }
+                div class="progress-container" {
+                    div class="progress-bar" style="width: 50%;" {}
+                }
+                p style="text-align: center; color: var(--text-muted);" {
+                    "This page will automatically update when complete."
+                }
+            }
+            script {
+                (PreEscaped(r#"
+                    const eventSource = new EventSource('/ws');
+                    eventSource.onmessage = function(event) {
+                        window.location.href = '/new_generation';
+                    };
+                    eventSource.onerror = function() {
+                        // Retry connection after 5 seconds
+                        setTimeout(() => window.location.reload(), 5000);
+                    };
+                "#))
+            }
+        };
+        Ok(RawHtml(base_layout("Creating Next Generation", content).into_string()))
     }
+}
 
-    Ok(RawHtml(r#"
-        <h1>Reproduction in progress</h1>
-        <p>The reproduction task has been enqueued. Please wait while the new generation is created.</p>
-        <script>
-            const eventSource = new EventSource('/ws');
-            eventSource.onmessage = function(event) {
-                alert(event.data);
-                window.location.href = '/new_generation';
-            };
-        </script>
-    "#))
+/// GET /reproduction_status - JSON endpoint for polling job status
+#[get("/reproduction_status")]
+pub async fn reproduction_status() -> rocket::response::content::RawJson<String> {
+    // Read status from the shared status file
+    let status_file = std::env::var("REPRODUCTION_STATUS_FILE")
+        .unwrap_or_else(|_| "/srv/shared/jobs/music-evo/current_status.json".to_string());
+
+    match tokio::fs::read_to_string(&status_file).await {
+        Ok(content) => {
+            // Return the JSON directly
+            rocket::response::content::RawJson(content)
+        }
+        Err(_) => {
+            // No status file - return idle status
+            rocket::response::content::RawJson(
+                r#"{"status": "idle", "message": "No reproduction job scheduled"}"#.to_string()
+            )
+        }
+    }
 }
 
 #[get("/new_generation")]
-async fn new_generation() -> RawHtml<&'static str> {
-    RawHtml("<h1>New generation created</h1><p><a href='/rate_songs'>Rate the new songs</a></p>")
+async fn new_generation() -> RawHtml<String> {
+    let content = html! {
+        article class="card" {
+            div style="text-align: center;" {
+                span style="font-size: 4rem;" { "🎵" }
+            }
+            h2 style="text-align: center;" { "New Generation Created!" }
+            p style="text-align: center;" {
+                "The songs have evolved. A new generation of music awaits your judgment."
+            }
+            div class="btn-group" {
+                a href="/rate_songs" role="button" class="btn btn-primary" {
+                    "Rate the New Songs"
+                }
+                a href="/" role="button" class="btn btn-secondary" {
+                    "Back to Home"
+                }
+            }
+        }
+    };
+
+    RawHtml(base_layout("New Generation", content).into_string())
 }
 
 /// GET /temp_adam.wav
@@ -139,9 +345,10 @@ pub async fn get_temp_adam_wav() -> Option<NamedFile> {
 /// GET /song_wav/<song_id>
 #[get("/song_wav/<song_id>")]
 pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<BinaryContent> {
-    // First, try to get the data from the in-memory cache.
+    // First, try to get the data from the LRU cache.
+    // Note: LruCache.get() requires &mut self for LRU updates
     {
-        let cache = state.audio_cache.read().await;
+        let mut cache = state.audio_cache.write().await;
         if let Some(audio) = cache.get(&song_id) {
             return Some(BinaryContent((**audio).clone()));
         }
@@ -152,7 +359,8 @@ pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<Binar
         Ok(data) => {
             let arc_data = Arc::new(data.clone());
             let mut cache = state.audio_cache.write().await;
-            cache.insert(song_id, arc_data);
+            // LruCache uses put() instead of insert()
+            cache.put(song_id, arc_data);
             Some(BinaryContent(data))
         },
         Err(e) => {
@@ -163,20 +371,56 @@ pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<Binar
 }
 
 #[get("/reproduction_message")]
-pub fn reproduction_message() -> RawHtml<&'static str> {
-    RawHtml("<h1>Reproduction in progress</h1><p>Please wait while the new generation is being created.</p>")
+pub fn reproduction_message() -> RawHtml<String> {
+    let content = html! {
+        article class="card" {
+            h2 { "Evolution in Progress" }
+            div class="spinner" {}
+            p style="text-align: center;" {
+                "The songs are currently reproducing. Please wait a moment and try again."
+            }
+            div class="btn-group" {
+                a href="/" role="button" class="btn btn-secondary" {
+                    "Back to Home"
+                }
+            }
+        }
+        script {
+            (PreEscaped("setTimeout(() => window.location.href = '/rate_songs', 5000);"))
+        }
+    };
+
+    RawHtml(base_layout("Reproduction in Progress", content).into_string())
 }
 
 /// GET /error
 #[get("/error")]
-pub fn error_page() -> RawHtml<&'static str> {
-    RawHtml("<h1>Something went wrong</h1>")
+pub fn error_page() -> RawHtml<String> {
+    let content = html! {
+        article class="card" {
+            div style="text-align: center;" {
+                span style="font-size: 4rem;" { "⚠️" }
+            }
+            h2 style="text-align: center;" { "Something Went Wrong" }
+            p style="text-align: center;" {
+                "An error occurred while processing your request. Please try again."
+            }
+            div class="btn-group" {
+                a href="/" role="button" class="btn btn-primary" {
+                    "Back to Home"
+                }
+            }
+        }
+    };
+
+    RawHtml(base_layout("Error", content).into_string())
 }
 
 /// Combine all routes
 pub fn routes() -> Vec<Route> {
     routes![
         index,
+        static_files,
         get_temp_adam_wav,
         get_song_wav,
         error_page,
@@ -189,6 +433,7 @@ pub fn routes() -> Vec<Route> {
         creating_next_generation_page,
         new_generation,
         ws,
-        reproduction_message
+        reproduction_message,
+        reproduction_status
     ]
 }

@@ -1,0 +1,169 @@
+# HTTPS Server Configuration for music_evo
+# Copy this to default.conf on production (martin) and update YOUR_DOMAIN
+#
+# Prerequisites:
+# 1. Obtain TLS certificates (see docs/public-access.md)
+# 2. Place certificates in /srv/services/music-evo/certs/
+# 3. Update YOUR_DOMAIN.example.com with your actual domain
+
+upstream app_backend {
+    server app:8000;
+    keepalive 32;
+}
+
+# Redirect HTTP to HTTPS
+server {
+    listen 80;
+    server_name YOUR_DOMAIN.example.com;
+
+    # ACME challenge for Let's Encrypt
+    location /.well-known/acme-challenge/ {
+        root /var/www/acme-challenge;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS Server
+server {
+    listen 443 ssl http2;
+    server_name YOUR_DOMAIN.example.com;
+
+    # ==========================================================================
+    # TLS Configuration
+    # ==========================================================================
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+
+    # Modern TLS configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    # OCSP Stapling
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    # Session settings
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+    # ==========================================================================
+    # Security Headers
+    # ==========================================================================
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # Connection limit per IP
+    limit_conn addr 20;
+
+    # ==========================================================================
+    # Static Files
+    # ==========================================================================
+    location /static/ {
+        proxy_pass http://app_backend/static/;
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # ==========================================================================
+    # Audio Files (rate limited)
+    # ==========================================================================
+    location ~ ^/song_wav/ {
+        limit_req zone=audio burst=10 nodelay;
+
+        proxy_pass http://app_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout 30s;
+    }
+
+    location = /temp_adam.wav {
+        limit_req zone=audio burst=5 nodelay;
+
+        proxy_pass http://app_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ==========================================================================
+    # Form Submissions (strictly rate limited)
+    # ==========================================================================
+    location ~ ^/(choose_adam|rate_songs)$ {
+        limit_req zone=general burst=20 nodelay;
+
+        proxy_pass http://app_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ==========================================================================
+    # Server-Sent Events (SSE)
+    # ==========================================================================
+    location = /ws {
+        proxy_pass http://app_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_set_header Connection '';
+        proxy_buffering off;
+        proxy_cache off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 3600s;
+    }
+
+    # ==========================================================================
+    # All Other Routes
+    # ==========================================================================
+    location / {
+        limit_req zone=general burst=20 nodelay;
+
+        proxy_pass http://app_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 10s;
+        proxy_read_timeout 30s;
+    }
+
+    # ==========================================================================
+    # Error Pages
+    # ==========================================================================
+    error_page 429 /429.html;
+    location = /429.html {
+        internal;
+        default_type text/html;
+        return 429 '<!DOCTYPE html><html><head><title>Too Many Requests</title></head><body><h1>429 - Too Many Requests</h1><p>Please slow down and try again.</p></body></html>';
+    }
+
+    error_page 502 503 504 /50x.html;
+    location = /50x.html {
+        internal;
+        default_type text/html;
+        return 503 '<!DOCTYPE html><html><head><title>Service Unavailable</title></head><body><h1>Service Temporarily Unavailable</h1><p>Please try again later.</p></body></html>';
+    }
+}

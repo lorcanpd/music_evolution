@@ -1,0 +1,92 @@
+# Docker Compose for Local Development
+# Usage: docker compose up --build
+#
+# This sets up:
+# - PostgreSQL database
+# - Music Evolution web app
+# - Nginx reverse proxy with rate limiting
+
+services:
+  # ==========================================================================
+  # PostgreSQL Database
+  # ==========================================================================
+  postgres:
+    image: postgres:16-bookworm
+    container_name: music-evo-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-musicevo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-musicevo}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-musicevo} -d ${POSTGRES_DB:-musicevo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # Not exposed externally - only accessible to app container
+    networks:
+      - backend
+
+  # ==========================================================================
+  # Music Evolution Web Application
+  # ==========================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: music-evo-app
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-musicevo}:${POSTGRES_PASSWORD:-devpassword}@postgres:5432/${POSTGRES_DB:-musicevo}
+      ROCKET_ADDRESS: "0.0.0.0"
+      ROCKET_PORT: "8000"
+      ROCKET_LOG_LEVEL: "normal"
+      # Development mode by default - threshold triggers reproduction
+      PRODUCTION_MODE: "${PRODUCTION_MODE:-false}"
+      # Status file for reproduction status endpoint (dev uses local path)
+      REPRODUCTION_STATUS_FILE: "${REPRODUCTION_STATUS_FILE:-/app/reproduction_status.json}"
+    volumes:
+      # WAV output directory - persisted on host
+      - ./current_generation:/app/current_generation
+      # Static files for development hot-reload
+      - ./static:/app/static:ro
+      # Habitat config
+      - ./habitat_config.json:/app/habitat_config.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - backend
+      - frontend
+
+  # ==========================================================================
+  # Nginx Reverse Proxy
+  # ==========================================================================
+  proxy:
+    image: nginx:alpine
+    container_name: music-evo-proxy
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      # TLS port (optional - enable in production)
+      # - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
+      # For TLS certificates (production)
+      # - ./deploy/nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - frontend
+
+networks:
+  backend:
+    driver: bridge
+  frontend:
+    driver: bridge
+
+volumes:
+  postgres_data:

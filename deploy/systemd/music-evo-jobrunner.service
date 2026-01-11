@@ -1,0 +1,37 @@
+[Unit]
+Description=Music Evolution Job Runner
+Documentation=file:///srv/services/music-evo/docs/slurm-offload.md
+After=network.target slurm.service
+
+[Service]
+Type=oneshot
+User=musicevo
+Group=musicevo
+
+# Configuration file
+EnvironmentFile=/etc/music-evo/jobrunner.env
+
+# Working directory
+WorkingDirectory=/srv/services/music-evo
+
+# The job runner script
+ExecStart=/srv/services/music-evo/scripts/music-evo-jobrunner
+
+# Timeouts
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=music-evo-jobrunner
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/shared/jobs/music-evo
+ReadWritePaths=/srv/shared/music-evo/current_generation
+
+[Install]
+WantedBy=multi-user.target

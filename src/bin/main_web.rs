@@ -12,10 +12,11 @@ use rocket::tokio::sync::broadcast;
 use deadpool_postgres::{Config as DpPgConfig, Pool, Runtime};
 use tokio_postgres::{NoTls, Config as PgClientConfig};
 use music_evo::web_interface;
-use music_evo::user_interaction::AppState;
+use music_evo::user_interaction::{AppState, AUDIO_CACHE_MAX_ENTRIES};
 use music_evo::task_queue::{TaskQueue, run_task_queue, run_threshold_checker};
 use music_evo::song_queue::{SongQueue, run_song_queue};
-use std::collections::HashMap;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -57,16 +58,36 @@ async fn rocket() -> _ {
 
     let song_queue_receiver = Arc::new(Mutex::new(song_queue_rx));
 
+    // Check if running in production mode (reproduction handled by external job runner)
+    let production_mode = std::env::var("PRODUCTION_MODE")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+
+    if production_mode {
+        println!("Running in PRODUCTION mode - reproduction handled by external job runner");
+    } else {
+        println!("Running in DEVELOPMENT mode - reproduction triggered by rating threshold");
+    }
+
     // Build the AppState, embedding the task queue sender.
+    // Use LRU-bounded audio cache to limit memory usage
+    let audio_cache = LruCache::new(
+        NonZeroUsize::new(AUDIO_CACHE_MAX_ENTRIES).unwrap()
+    );
+
     let app_state = AppState {
         pool: pool.clone(),
-        audio_cache: RwLock::new(HashMap::new()),
+        audio_cache: RwLock::new(audio_cache),
         reproduction_in_progress: Arc::new(AtomicBool::new(false)),
         first_gen_created: Arc::new(AtomicBool::new(false)),
         task_queue: task_queue_sender, // Store the sender for enqueuing tasks.
         song_queue_sender: SongQueue {sender: song_queue_sender, count: Arc::new(AtomicUsize::new(0))}, // Store the sender for song queue.
         song_queue_receiver: song_queue_receiver.clone(), // Store the receiver for processing songs.
+        production_mode,
     };
+
+    // Store production_mode for use in fairing closures
+    let is_production = production_mode;
 
     // Build Rocket and attach an on-liftoff fairing to spawn the task queue worker.
     rocket::build()
@@ -92,19 +113,26 @@ async fn rocket() -> _ {
                 });
             })
         }))
-        // Add this likkle threshold checker to spawn on liftoff.
+        // Add threshold checker only in development mode.
+        // In production, reproduction is handled by external job runner.
         .attach(AdHoc::on_liftoff("Threshold Checker", move |rocket| {
             let pool = rocket.state::<AppState>().unwrap().pool.clone();
             let reproduction_flag = rocket.state::<AppState>().unwrap().reproduction_in_progress.clone();
             let first_gen_created = rocket.state::<AppState>().unwrap().first_gen_created.clone();
-            // We use the same TaskQueue sender stored in AppState.
             let task_queue = rocket.state::<AppState>().unwrap().task_queue.clone();
+            let is_prod = rocket.state::<AppState>().unwrap().production_mode;
+
             Box::pin(async move {
-                rocket::tokio::spawn(async move {
-                    run_threshold_checker(
-                        pool, reproduction_flag, first_gen_created, task_queue
-                    ).await;
-                });
+                if is_prod {
+                    println!("Threshold checker DISABLED in production mode");
+                } else {
+                    println!("Threshold checker ENABLED in development mode");
+                    rocket::tokio::spawn(async move {
+                        run_threshold_checker(
+                            pool, reproduction_flag, first_gen_created, task_queue
+                        ).await;
+                    });
+                }
             })
         }))
         // Spawn the song queue worker.

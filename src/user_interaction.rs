@@ -7,8 +7,41 @@ use rand::Rng;
 use rocket::{get, post, State};
 use rocket::form::{Form, FromForm};
 use rocket::response::{Redirect, content::RawHtml, status};
-use maud::{html, Markup};
+use maud::{html, Markup, PreEscaped, DOCTYPE};
 use deadpool_postgres::Pool;
+use lru::LruCache;
+use std::num::NonZeroUsize;
+
+/// Maximum number of audio files to cache in memory
+pub const AUDIO_CACHE_MAX_ENTRIES: usize = 100;
+
+/// Base HTML layout with consistent styling
+fn base_layout(title: &str, content: Markup) -> Markup {
+    html! {
+        (DOCTYPE)
+        html lang="en" data-theme="dark" {
+            head {
+                meta charset="utf-8";
+                meta name="viewport" content="width=device-width, initial-scale=1";
+                title { (title) " | Music Evolution" }
+                link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css";
+                link rel="stylesheet" href="/static/style.css";
+            }
+            body {
+                main class="container" {
+                    header {
+                        h1 { "Music Evolution" }
+                        p class="subtitle" { "From beeps and boops, to beats and bops" }
+                    }
+                    (content)
+                    footer {
+                        p { "An evolutionary music experiment" }
+                    }
+                }
+            }
+        }
+    }
+}
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use std::sync::Arc;
@@ -34,13 +67,15 @@ lazy_static! {
 
 pub struct AppState {
     pub pool: Pool,
-    pub audio_cache: RwLock<HashMap<i32, Arc<Vec<u8>>>>,
+    /// LRU-bounded audio cache (max AUDIO_CACHE_MAX_ENTRIES entries)
+    pub audio_cache: RwLock<LruCache<i32, Arc<Vec<u8>>>>,
     pub reproduction_in_progress: Arc<AtomicBool>,
     pub first_gen_created: Arc<AtomicBool>,
     pub task_queue: TaskQueue,
     pub song_queue_sender: SongQueue,
     pub song_queue_receiver: Arc<Mutex<Receiver<i32>>>,
-
+    /// Production mode: reproduction is handled by external job runner
+    pub production_mode: bool,
 }
 
 
@@ -75,7 +110,6 @@ pub async fn get_choose_adam(state: &State<AppState>) -> Result<RawHtml<String>,
     // 2. Store in the global static
     {
         let mut lock = CURRENT_ADAM.lock().await;
-        // let mut lock = CURRENT_ADAM.lock().await;
         *lock = Some(adam.clone_genome());
     }
 
@@ -88,28 +122,37 @@ pub async fn get_choose_adam(state: &State<AppState>) -> Result<RawHtml<String>,
         ));
     }
 
-    // 4. Create the HTML page using maud
-    let markup: Markup = html! {
-        html {
-            head {
-                title { "Choose Adam" }
+    // 4. Create the HTML page using maud with proper styling
+    let content = html! {
+        article class="card" {
+            h2 { "Choose the Primordial Song" }
+            p {
+                "This is the first song from which all others will evolve. "
+                "Listen carefully and decide if this is a worthy ancestor."
             }
-            body {
-                h1 { "New Random Adam" }
-                p { "Mutation rate assigned. Listen below." }
-                audio controls {
+
+            div class="audio-container" {
+                div class="waveform" {}
+                audio controls autoplay {
                     source src="/temp_adam.wav" type="audio/wav";
                     "Your browser does not support the audio element."
                 }
-                form action="/choose_adam" method="post" {
-                    button type="submit" name="action" value="yes" { "Yes, Accept This Adam" }
-                    button type="submit" name="action" value="no" { "Reject, Generate Another" }
+            }
+
+            form action="/choose_adam" method="post" {
+                div class="btn-group" {
+                    button type="submit" name="action" value="yes" class="btn btn-primary" {
+                        "Accept This Song"
+                    }
+                    button type="submit" name="action" value="no" class="btn btn-secondary" {
+                        "Generate Another"
+                    }
                 }
             }
         }
     };
 
-    Ok(RawHtml(markup.into_string()))
+    Ok(RawHtml(base_layout("Choose Adam", content).into_string()))
 }
 
 // ------------------------------------------
@@ -220,25 +263,41 @@ pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, 
         song
     };
 
-    let markup = maud::html! {
-        html {
-            head { title { "Rate a Song" } }
-            body {
-                h1 { "Rate Song" }
-                p { "Listen to the song below and rate it." }
-                audio controls {
+    let content = html! {
+        article class="card" {
+            h2 { "Rate This Song" }
+            p {
+                "Listen to the song and vote. Does it sound good to you? "
+                "Your rating helps guide the evolution of the music."
+            }
+
+            div class="audio-container" {
+                div class="waveform" {}
+                audio controls autoplay id="song-player" {
                     source src=(format!("/song_wav/{}", song_id)) type="audio/wav";
                     "Your browser does not support the audio element."
                 }
-                form action="/rate_songs" method="post" {
-                    input type="hidden" name="song_id" value=(song_id);
-                    button type="submit" name="rating" value="1" { "Yes" }
-                    button type="submit" name="rating" value="0" { "No" }
+            }
+
+            form action="/rate_songs" method="post" id="rating-form" {
+                input type="hidden" name="song_id" value=(song_id);
+                div class="btn-group" {
+                    button type="submit" name="rating" value="1" class="btn btn-primary" {
+                        "I Like It"
+                    }
+                    button type="submit" name="rating" value="0" class="btn btn-secondary" {
+                        "Not For Me"
+                    }
                 }
+            }
+
+            div style="text-align: center; margin-top: 1rem;" {
+                a href="/" style="color: var(--text-muted);" { "Back to Home" }
             }
         }
     };
-    Ok(RawHtml(markup.into_string()))
+
+    Ok(RawHtml(base_layout("Rate Songs", content).into_string()))
 }
 
 // ------------------------------------------
@@ -292,46 +351,5 @@ pub fn choose_adam() -> Result<Genome, Box<dyn Error>> {
     }
 }
 
-#[get("/rate_songs")]
-pub async fn rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
-    if state.reproduction_in_progress.load(Ordering::SeqCst) {
-        return Err(Redirect::to("/reproduction_message"));
-    }
-    // Get a connection and sample a random song ID.
-    let client = state.pool.get().await.map_err(|_| Redirect::to("/error"))?;
-    let row = client
-        .query_one(
-            "SELECT song_id FROM songs
-             WHERE generation = (SELECT MAX(generation) FROM songs)
-             ORDER BY RANDOM() LIMIT 1",
-            &[],
-        )
-        .await
-        .map_err(|_| Redirect::to("/error"))?;
-    let song_id: i32 = row.get("song_id");
-
-    // Build the HTML form to rate the song.
-    let markup: Markup = html! {
-        html {
-            head { title { "Rate a Song" } }
-            body {
-                h1 { "Rate Song" }
-                p { "Listen to the song below and rate it." }
-                audio controls {
-                    source src=(format!("/song_wav/{}", song_id)) type="audio/wav";
-                    "Your browser does not support the audio element."
-                }
-                form action="/rate_songs" method="post" {
-                    input type="hidden" name="song_id" value=(song_id);
-                    // A simple button-based form – you could later enhance this to use radio buttons or another widget.
-                    button type="submit" name="rating" value="1" { "Yes" }
-                    button type="submit" name="rating" value="0" { "No" }
-                }
-            }
-        }
-    };
-
-    Ok(RawHtml(markup.into_string()))
-}
 
 

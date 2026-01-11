@@ -1,0 +1,360 @@
+/* =============================================================================
+   Music Evolution - Custom Styles
+   Built on top of Pico.css (loaded via CDN)
+   ============================================================================= */
+
+:root {
+    /* Color scheme */
+    --primary-color: #7c3aed;
+    --primary-hover: #6d28d9;
+    --secondary-color: #10b981;
+    --background-gradient: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #1e1b4b 100%);
+    --card-bg: rgba(255, 255, 255, 0.05);
+    --card-border: rgba(255, 255, 255, 0.1);
+    --text-muted: rgba(255, 255, 255, 0.7);
+
+    /* Animation */
+    --transition-speed: 0.3s;
+}
+
+/* Dark theme base */
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    min-height: 100vh;
+    background: var(--background-gradient);
+    background-attachment: fixed;
+}
+
+/* Header styles */
+header {
+    text-align: center;
+    padding: 2rem 0;
+    margin-bottom: 2rem;
+}
+
+header h1 {
+    font-size: 2.5rem;
+    background: linear-gradient(90deg, #a78bfa, #60a5fa, #34d399);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.5rem;
+}
+
+header .subtitle {
+    color: var(--text-muted);
+    font-size: 1.1rem;
+}
+
+/* Card component */
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 1rem;
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+    backdrop-filter: blur(10px);
+    transition: transform var(--transition-speed), box-shadow var(--transition-speed);
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+.card h2 {
+    margin-top: 0;
+    color: #e0e7ff;
+}
+
+/* Audio player styling */
+.audio-container {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 0.75rem;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+}
+
+audio {
+    width: 100%;
+    height: 50px;
+    border-radius: 0.5rem;
+}
+
+/* Custom audio player colors */
+audio::-webkit-media-controls-panel {
+    background: linear-gradient(135deg, #1e1b4b, #312e81);
+}
+
+/* Button styles */
+.btn-group {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
+}
+
+button, .btn {
+    padding: 0.75rem 2rem;
+    border-radius: 0.5rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    transition: all var(--transition-speed);
+    cursor: pointer;
+    border: none;
+}
+
+.btn-primary, button[type="submit"][value="yes"], button[type="submit"][value="1"] {
+    background: linear-gradient(135deg, var(--secondary-color), #059669);
+    color: white;
+}
+
+.btn-primary:hover, button[type="submit"][value="yes"]:hover, button[type="submit"][value="1"]:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4);
+}
+
+.btn-secondary, button[type="submit"][value="no"], button[type="submit"][value="0"] {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.btn-secondary:hover, button[type="submit"][value="no"]:hover, button[type="submit"][value="0"]:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.05);
+}
+
+/* Status indicators */
+.status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 2rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.status-pending {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+}
+
+.status-running {
+    background: rgba(59, 130, 246, 0.2);
+    color: #3b82f6;
+}
+
+.status-completed {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+}
+
+.status-error {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+/* Pulse animation for active states */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.pulse {
+    animation: pulse 2s infinite;
+}
+
+/* Loading spinner */
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 2rem auto;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Progress bar */
+.progress-container {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+    height: 8px;
+    overflow: hidden;
+    margin: 1rem 0;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+    border-radius: 0.5rem;
+    transition: width 0.5s ease;
+}
+
+/* Navigation */
+nav {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+nav a {
+    color: var(--text-muted);
+    text-decoration: none;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    transition: all var(--transition-speed);
+}
+
+nav a:hover, nav a.active {
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    padding: 2rem 0;
+    margin-top: 3rem;
+    border-top: 1px solid var(--card-border);
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
+/* Generation info */
+.generation-info {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    margin: 1.5rem 0;
+    flex-wrap: wrap;
+}
+
+.generation-stat {
+    text-align: center;
+}
+
+.generation-stat .value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--secondary-color);
+}
+
+.generation-stat .label {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    header h1 {
+        font-size: 1.75rem;
+    }
+
+    .card {
+        padding: 1.5rem;
+    }
+
+    .btn-group {
+        flex-direction: column;
+    }
+
+    button, .btn {
+        width: 100%;
+    }
+}
+
+/* Waveform visualization placeholder */
+.waveform {
+    height: 60px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        rgba(124, 58, 237, 0.3) 20%,
+        rgba(16, 185, 129, 0.3) 50%,
+        rgba(124, 58, 237, 0.3) 80%,
+        transparent 100%
+    );
+    border-radius: 0.5rem;
+    margin: 1rem 0;
+    position: relative;
+    overflow: hidden;
+}
+
+.waveform::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg,
+        transparent,
+        rgba(255, 255, 255, 0.2),
+        transparent
+    );
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    to { left: 100%; }
+}
+
+/* Form enhancements */
+form {
+    margin: 0;
+}
+
+input[type="hidden"] {
+    display: none;
+}
+
+/* Link styling */
+a {
+    color: #a78bfa;
+    transition: color var(--transition-speed);
+}
+
+a:hover {
+    color: #c4b5fd;
+}
+
+/* Message boxes */
+.message {
+    padding: 1rem 1.5rem;
+    border-radius: 0.5rem;
+    margin: 1rem 0;
+}
+
+.message-info {
+    background: rgba(59, 130, 246, 0.2);
+    border-left: 4px solid #3b82f6;
+}
+
+.message-success {
+    background: rgba(16, 185, 129, 0.2);
+    border-left: 4px solid #10b981;
+}
+
+.message-warning {
+    background: rgba(251, 191, 36, 0.2);
+    border-left: 4px solid #fbbf24;
+}
+
+.message-error {
+    background: rgba(239, 68, 68, 0.2);
+    border-left: 4px solid #ef4444;
+}

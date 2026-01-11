@@ -1,14 +1,26 @@
 // src/reproduction.rs
 
 use std::error::Error;
+use std::path::Path;
 use rand::Rng;
 use deadpool_postgres::Pool;
-use tokio_postgres::NoTls;
 
 use crate::genome::Genome;
 use crate::genome_crosser::GenomeCrosser;
 use crate::decode_genome::DecodedGenome;
 use crate::play_genes; // for generate_wav
+
+/// Run reproduction with explicit WAV output directory.
+/// Returns the number of songs created.
+/// Used by the reproduce CLI binary for Slurm jobs.
+pub async fn run_reproduction(
+    current_generation: i32,
+    next_generation: i32,
+    pool: &Pool,
+    wav_dir: &Path,
+) -> Result<usize, Box<dyn Error>> {
+    differential_reproduction_impl(current_generation, next_generation, pool, Some(wav_dir)).await
+}
 
 /// Steps:
 /// 1. Compute total rating for each song in `current_generation_fitness`.
@@ -21,10 +33,20 @@ pub async fn differential_reproduction(
     next_generation: i32,
     pool: &Pool
 ) -> Result<(), Box<dyn Error>> {
+    differential_reproduction_impl(current_generation, next_generation, pool, None).await?;
+    Ok(())
+}
 
-    // 1. Connect to DB
-    // let database_url = std::env::var("DATABASE_URL")?;
-    // let (mut client, connection) = connect(&database_url, NoTls).await?;
+/// Internal implementation that supports both caller patterns.
+/// If wav_dir is None, uses the default "current_generation" directory.
+async fn differential_reproduction_impl(
+    current_generation: i32,
+    next_generation: i32,
+    pool: &Pool,
+    wav_dir: Option<&Path>,
+) -> Result<usize, Box<dyn Error>> {
+    use std::collections::HashMap;
+
     let client = pool.get().await?;
 
     // 2. Compute total rating per song
@@ -51,7 +73,6 @@ pub async fn differential_reproduction(
 
 
     // Map: node -> Vec<(song_id, total_rating)>
-    use std::collections::HashMap;
     let mut node_songs: HashMap<i32, Vec<(i32, i64)>> = HashMap::new();
     for row in rows {
         let song_id: i32 = row.get("song_id");
@@ -185,30 +206,37 @@ pub async fn differential_reproduction(
     }
 
     // 6. Overwrite the current_generation folder with newly created songs
-    // remove old, create new, or just empty it
+    // Determine output directory
     use std::fs;
-    if std::path::Path::new("current_generation").exists() {
-        fs::remove_dir_all("current_generation")?;
+    let output_dir = wav_dir
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("current_generation"));
+
+    // Remove old and create new directory
+    if output_dir.exists() {
+        fs::remove_dir_all(&output_dir)?;
     }
-    fs::create_dir_all("current_generation")?;
+    fs::create_dir_all(&output_dir)?;
+
+    let song_count = new_songs.len();
 
     // for each new song, decode => generate wav
-    // or decode from the child's genome if you want
-    for song_id in new_songs {
+    for song_id in &new_songs {
         let row = client.query_one(
-            "SELECT genome FROM songs WHERE song_id=$1", &[&song_id]).await?;
+            "SELECT genome FROM songs WHERE song_id=$1", &[song_id]).await?;
         let genome: Genome = row.get("genome");
         let decoded = DecodedGenome::decode(&genome);
 
-        let filename = format!("current_generation/{}.wav", song_id);
-        play_genes::generate_wav(&decoded, &filename)?;
+        let filename = output_dir.join(format!("{}.wav", song_id));
+        play_genes::generate_wav(&decoded, filename.to_str().unwrap())?;
+        eprintln!("Generated WAV: {}", filename.display());
     }
 
     // clear out the current_generation_fitness table
     client.execute("DELETE FROM current_generation_fitness", &[]).await?;
 
-    println!("Differential reproduction complete. Next generation = {}", next_generation);
-    Ok(())
+    eprintln!("Differential reproduction complete. Next generation = {}, songs created = {}", next_generation, song_count);
+    Ok(song_count)
 }
 
 /// Weighted random parent selection:
