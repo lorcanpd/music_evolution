@@ -21,15 +21,18 @@ COPY Cargo.toml Cargo.lock ./
 
 # Create dummy src to build dependencies
 RUN mkdir -p src/bin && \
-    echo 'fn main() { println!("dummy"); }' > src/main.rs && \
     echo 'fn main() { println!("dummy"); }' > src/bin/main_web.rs && \
     echo 'fn main() { println!("dummy"); }' > src/bin/init_experiment.rs && \
     echo 'fn main() { println!("dummy"); }' > src/bin/scrub_db.rs && \
+    echo 'fn main() { println!("dummy"); }' > src/bin/reproduce.rs && \
     echo 'pub fn dummy() {}' > src/lib.rs
 
 # Build dependencies only (this layer will be cached)
 RUN cargo build --release --bin web_server && \
-    rm -rf src target/release/deps/music_evo* target/release/web_server*
+    rm -rf src && \
+    rm -rf target/release/deps/music_evo* && \
+    rm -rf target/release/.fingerprint/music_evo* && \
+    rm -rf target/release/web_server* target/release/init_experiment* target/release/scrub_db* target/release/reproduce*
 
 # Copy actual source code
 COPY src ./src

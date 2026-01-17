@@ -1,1 +1,39 @@
+# Build artifacts
 /target
+
+# Environment (contains secrets)
+.env
+
+# Generated audio files
+/current_generation/
+temp_adam.wav
+
+# Docker volumes
+postgres_data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Deployment bundles
+*.tar.gz
+music-evo-deploy.tar.gz
+
+**/*.pem
+**/*.key
+**/*.crt
+**/certs/
+**/postgres/
+**/current_generation/
+**/*.wav
+**/acme-challenge/
+**/.cloudflared/
+**/backup_*.sql
+
+/target/
