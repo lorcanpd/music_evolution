@@ -43,11 +43,21 @@ pub async fn store_current_generation_wavs(pool: &Pool) -> Result<(), Box<dyn Er
 pub async fn create_generation_1(
     pool: &Pool,
     adam: &Genome,
-    eve: &Genome
+    eve: &Genome,
+    adam_id: i32,
+    eve_id: i32,
 ) -> Result<(), Box<dyn Error>> {
     let generation = 1;
     let client = pool.get().await?;
-    let rows = client.query("SELECT node, capacity FROM habitat", &[]).await?;
+
+    // Only create children in nodes with capacity > 0, excluding node 0 (origin node for Adam/Eve)
+    let rows = client.query("SELECT node, capacity FROM habitat WHERE node > 0", &[]).await?;
+
+    if rows.is_empty() {
+        return Err("No habitat nodes found (excluding origin node 0)".into());
+    }
+
+    let mut total_created = 0;
     for row in rows {
         let node_id: i32 = row.get("node");
         let capacity: i32 = row.get("capacity");
@@ -57,11 +67,14 @@ pub async fn create_generation_1(
                 "INSERT INTO songs (generation, node, genome, parent1_id, parent2_id)
                 VALUES ($1, $2, $3, $4, $5)
                 RETURNING song_id",
-                &[&generation, &node_id, &child, &1, &2],
+                &[&generation, &node_id, &child, &adam_id, &eve_id],
             ).await?;
             let _child_id: i32 = inserted_row.get(0);
+            total_created += 1;
         }
     }
+
+    eprintln!("create_generation_1: Created {} songs in generation 1", total_created);
     Ok(())
 }
 
@@ -88,7 +101,9 @@ pub async fn initialise_experiment(pool: &Pool) -> Result<(), Box<dyn Error>> {
     let eve_id: i32 = eve_row.get(0);
     eve.assign_song_id(eve_id);
 
-    create_generation_1(pool, &adam, &eve).await?;
+    drop(client); // Release connection before calling create_generation_1
+
+    create_generation_1(pool, &adam, &eve, adam_id, eve_id).await?;
     store_current_generation_wavs(pool).await?;
 
     Ok(())

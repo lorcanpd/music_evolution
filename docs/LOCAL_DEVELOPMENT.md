@@ -15,6 +15,24 @@ docker compose logs -f app
 open http://localhost:8080
 ```
 
+## Complete Reset
+
+Use the reset script to completely wipe the database and start fresh:
+
+```bash
+# Reset everything (keeps current Docker image)
+./scripts/reset-dev.sh
+
+# Reset and rebuild Docker image
+./scripts/reset-dev.sh --rebuild
+```
+
+This will:
+- Stop all containers
+- Remove the PostgreSQL volume (wipes database)
+- Clean audio and data directories
+- Restart containers
+
 ## Common Operations
 
 ### Full Reset (Database + Audio + Data)

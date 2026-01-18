@@ -310,24 +310,47 @@ pub async fn initialise_experiment_route(state: &State<AppState>) -> Result<Redi
 
 #[get("/create_first_generation")]
 async fn create_first_generation(state: &State<AppState>) -> Result<Redirect, Redirect> {
-    let client = state.pool.get().await.map_err(|_| Redirect::to("/error"))?;
-    let adam: Genome = client
-        .query_one("SELECT genome FROM songs WHERE generation=0 and song_id=1", &[])
-        .await.map_err(|_| Redirect::to("/error"))?
-        .get("genome");
-    let eve: Genome = client
-        .query_one("SELECT genome FROM songs WHERE generation=0 and song_id=2", &[])
-        .await.map_err(|_| Redirect::to("/error"))?
-        .get("genome");
+    let client = state.pool.get().await.map_err(|e| {
+        eprintln!("create_first_generation: Failed to get DB connection: {}", e);
+        Redirect::to("/error")
+    })?;
+
+    // Query Adam and Eve by generation=0, ordered by song_id (first two songs)
+    let rows = client
+        .query("SELECT song_id, genome FROM songs WHERE generation=0 ORDER BY song_id LIMIT 2", &[])
+        .await
+        .map_err(|e| {
+            eprintln!("create_first_generation: Failed to query Adam/Eve: {}", e);
+            Redirect::to("/error")
+        })?;
+
+    if rows.len() < 2 {
+        eprintln!("create_first_generation: Expected 2 songs in generation 0, found {}", rows.len());
+        return Err(Redirect::to("/error"));
+    }
+
+    let adam_id: i32 = rows[0].get("song_id");
+    let eve_id: i32 = rows[1].get("song_id");
+    let adam: Genome = rows[0].get("genome");
+    let eve: Genome = rows[1].get("genome");
+
+    eprintln!("create_first_generation: Adam ID={}, Eve ID={}", adam_id, eve_id);
 
     drop(client);
 
-    create_generation_1(&state.pool, &adam, &eve)
+    create_generation_1(&state.pool, &adam, &eve, adam_id, eve_id)
         .await
-        .map_err(|_| Redirect::to("/error"))?;
+        .map_err(|e| {
+            eprintln!("create_first_generation: Failed to create generation 1: {}", e);
+            Redirect::to("/error")
+        })?;
+
     store_current_generation_wavs(&state.pool)
         .await
-        .map_err(|_| Redirect::to("/error"))?;
+        .map_err(|e| {
+            eprintln!("create_first_generation: Failed to store WAVs: {}", e);
+            Redirect::to("/error")
+        })?;
 
     // Update the app state to indicate that the first generation has been created.
     state.first_gen_created.store(true, Ordering::SeqCst);
