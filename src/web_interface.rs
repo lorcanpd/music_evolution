@@ -73,35 +73,192 @@ pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
     }
 }
 
-/// GET / => Main landing page.
-#[get("/")]
-pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
-    let client = state.pool.get().await.map_err(|_| Redirect::to("/error"))?;
+/// Experiment state for homepage rendering
+enum ExperimentState {
+    /// Cannot connect to database
+    DatabaseError(String),
+    /// Tables don't exist yet
+    NotInitialized,
+    /// Tables exist but no Adam chosen
+    NeedsAdam,
+    /// Adam chosen but generation 1 not created
+    NeedsFirstGeneration,
+    /// Fully operational
+    Ready {
+        current_gen: i32,
+        song_count: i64,
+        rating_count: i64,
+        is_reproducing: bool,
+    },
+}
 
-    // Check if experiment is initialized (tables exist and have data)
-    let init_row = client
+/// GET / => Main landing page (never redirects, always shows content).
+#[get("/")]
+pub async fn index(state: &State<AppState>) -> RawHtml<String> {
+    let experiment_state = get_experiment_state(state).await;
+
+    let content = match experiment_state {
+        ExperimentState::DatabaseError(msg) => {
+            html! {
+                article class="card" {
+                    h2 { "DATABASE ERROR" }
+                    p { "Cannot connect to the database. Please check that PostgreSQL is running." }
+                    p class="meta" { (msg) }
+                    div class="btn-group" {
+                        a href="/" role="button" class="btn btn-primary" { "Retry" }
+                    }
+                }
+            }
+        }
+        ExperimentState::NotInitialized => {
+            html! {
+                article class="card" {
+                    h2 { "MUSIC EVOLUTION" }
+                    p {
+                        "Welcome to the evolutionary music experiment. "
+                        "Songs evolve based on your ratings. Listen, vote, and guide the evolution of music."
+                    }
+                    p {
+                        "To begin, we need to initialize the experiment and create the primordial song."
+                    }
+                    div class="btn-group" {
+                        a href="/initialise_experiment" role="button" class="btn btn-primary" {
+                            "Initialize Experiment"
+                        }
+                    }
+                }
+            }
+        }
+        ExperimentState::NeedsAdam => {
+            html! {
+                article class="card" {
+                    h2 { "CHOOSE THE PRIMORDIAL SONG" }
+                    p {
+                        "The experiment is initialized. Now you need to choose the first song "
+                        "from which all others will evolve."
+                    }
+                    div class="btn-group" {
+                        a href="/choose_adam" role="button" class="btn btn-primary" {
+                            "Choose Primordial Song"
+                        }
+                    }
+                }
+            }
+        }
+        ExperimentState::NeedsFirstGeneration => {
+            html! {
+                article class="card" {
+                    h2 { "CREATE FIRST GENERATION" }
+                    p {
+                        "The primordial song has been chosen. Now we need to create the first generation of songs."
+                    }
+                    div class="btn-group" {
+                        a href="/create_first_generation" role="button" class="btn btn-primary" {
+                            "Create First Generation"
+                        }
+                    }
+                }
+            }
+        }
+        ExperimentState::Ready { current_gen, song_count, rating_count, is_reproducing } => {
+            html! {
+                article class="card" {
+                    h2 { "MUSIC EVOLUTION" }
+                    p {
+                        "Songs evolve based on your ratings. "
+                        "Listen and vote on which ones sound good to you. "
+                        "The best songs will reproduce to create the next generation."
+                    }
+
+                    div class="generation-info" {
+                        div class="generation-stat" {
+                            span class="value" { (current_gen) }
+                            span class="label" { "Generation" }
+                        }
+                        div class="generation-stat" {
+                            span class="value" { (song_count) }
+                            span class="label" { "Songs" }
+                        }
+                        div class="generation-stat" {
+                            span class="value" { (rating_count) }
+                            span class="label" { "Ratings" }
+                        }
+                    }
+
+                    @if is_reproducing {
+                        div class="message message-info" {
+                            span class="status status-running pulse" { "CREATING NEXT GENERATION..." }
+                        }
+                    }
+
+                    div class="btn-group" {
+                        a href="/rate_songs" role="button" class="btn btn-primary" {
+                            "Rate Songs"
+                        }
+                        a href="/greatest_hits" role="button" class="btn btn-secondary" {
+                            "Greatest Hits"
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    RawHtml(base_layout("Home", content).into_string())
+}
+
+/// Determine the current state of the experiment.
+async fn get_experiment_state(state: &State<AppState>) -> ExperimentState {
+    // Try to get database connection
+    let client = match state.pool.get().await {
+        Ok(c) => c,
+        Err(e) => return ExperimentState::DatabaseError(e.to_string()),
+    };
+
+    // Check if tables exist and have data
+    let gen0_count = client
         .query_one("SELECT COUNT(*) as count FROM songs WHERE generation=0", &[])
         .await;
 
-    match init_row {
-        Ok(r) => {
-            let count: i64 = r.get("count");
-            if count == 0 {
-                return Err(Redirect::to("/initialise_experiment"));
-            }
-        }
+    match gen0_count {
         Err(e) => {
-            // If tables don't exist, redirect to initialization
-            // Otherwise it's a real error
             let err_msg = e.to_string();
             if err_msg.contains("does not exist") || err_msg.contains("relation") {
-                return Err(Redirect::to("/initialise_experiment"));
+                ExperimentState::NotInitialized
+            } else {
+                ExperimentState::DatabaseError(err_msg)
             }
-            return Err(Redirect::to("/error"));
+        }
+        Ok(row) => {
+            let count: i64 = row.get("count");
+            if count == 0 {
+                // Tables exist but no Adam - check if tables were just created
+                ExperimentState::NeedsAdam
+            } else if count == 2 {
+                // Adam and Eve exist, check if generation 1 exists
+                let gen1_count: i64 = client
+                    .query_one("SELECT COUNT(*) as count FROM songs WHERE generation=1", &[])
+                    .await
+                    .map(|r| r.get("count"))
+                    .unwrap_or(0);
+
+                if gen1_count == 0 {
+                    ExperimentState::NeedsFirstGeneration
+                } else {
+                    get_ready_state(&client, state).await
+                }
+            } else {
+                get_ready_state(&client, state).await
+            }
         }
     }
+}
 
-    // Get current generation stats
+/// Get the ready state with current stats.
+async fn get_ready_state(
+    client: &deadpool_postgres::Client,
+    state: &State<AppState>,
+) -> ExperimentState {
     let stats = client
         .query_one(
             "SELECT MAX(generation) as gen, COUNT(*) as songs FROM songs WHERE generation = (SELECT MAX(generation) FROM songs)",
@@ -114,7 +271,6 @@ pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect>
         .map(|r| (r.get::<_, Option<i32>>("gen").unwrap_or(0), r.get::<_, i64>("songs")))
         .unwrap_or((0, 0));
 
-    // Get rating count
     let rating_count: i64 = client
         .query_one("SELECT COUNT(*) as count FROM current_generation_fitness", &[])
         .await
@@ -123,48 +279,12 @@ pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect>
 
     let is_reproducing = state.reproduction_in_progress.load(Ordering::SeqCst);
 
-    let content = html! {
-        article class="card" {
-            h2 { "Welcome, Listener" }
-            p {
-                "This is an evolutionary music experiment. Songs evolve based on your ratings. "
-                "Listen to songs and vote on which ones sound good to you. "
-                "The best songs will reproduce to create the next generation."
-            }
-
-            div class="generation-info" {
-                div class="generation-stat" {
-                    span class="value" { (current_gen) }
-                    span class="label" { "Generation" }
-                }
-                div class="generation-stat" {
-                    span class="value" { (song_count) }
-                    span class="label" { "Songs" }
-                }
-                div class="generation-stat" {
-                    span class="value" { (rating_count) }
-                    span class="label" { "Ratings" }
-                }
-            }
-
-            @if is_reproducing {
-                div class="message message-info" {
-                    span class="status status-running pulse" { "Creating next generation..." }
-                }
-            }
-
-            div class="btn-group" {
-                a href="/rate_songs" role="button" class="btn btn-primary" {
-                    "Start Rating Songs"
-                }
-                a href="/greatest_hits" role="button" class="btn btn-secondary" {
-                    "Greatest Hits"
-                }
-            }
-        }
-    };
-
-    Ok(RawHtml(base_layout("Home", content).into_string()))
+    ExperimentState::Ready {
+        current_gen,
+        song_count,
+        rating_count,
+        is_reproducing,
+    }
 }
 
 /// GET /initialise_experiment
