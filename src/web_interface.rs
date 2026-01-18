@@ -78,7 +78,7 @@ pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
 pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
     let client = state.pool.get().await.map_err(|_| Redirect::to("/error"))?;
 
-    // Check if experiment is initialized
+    // Check if experiment is initialized (tables exist and have data)
     let init_row = client
         .query_one("SELECT COUNT(*) as count FROM songs WHERE generation=0", &[])
         .await;
@@ -90,7 +90,15 @@ pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect>
                 return Err(Redirect::to("/initialise_experiment"));
             }
         }
-        Err(_) => return Err(Redirect::to("/error")),
+        Err(e) => {
+            // If tables don't exist, redirect to initialization
+            // Otherwise it's a real error
+            let err_msg = e.to_string();
+            if err_msg.contains("does not exist") || err_msg.contains("relation") {
+                return Err(Redirect::to("/initialise_experiment"));
+            }
+            return Err(Redirect::to("/error"));
+        }
     }
 
     // Get current generation stats
