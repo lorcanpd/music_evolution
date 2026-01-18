@@ -334,10 +334,11 @@ async fn create_first_generation(state: &State<AppState>) -> Result<Redirect, Re
     let adam: Genome = rows[0].get("genome");
     let eve: Genome = rows[1].get("genome");
 
-    eprintln!("create_first_generation: Adam ID={}, Eve ID={}", adam_id, eve_id);
+    println!("create_first_generation: Adam ID={}, Eve ID={}", adam_id, eve_id);
 
     drop(client);
 
+    // Create generation 1 in the database
     create_generation_1(&state.pool, &adam, &eve, adam_id, eve_id)
         .await
         .map_err(|e| {
@@ -345,15 +346,22 @@ async fn create_first_generation(state: &State<AppState>) -> Result<Redirect, Re
             Redirect::to("/error")
         })?;
 
-    store_current_generation_wavs(&state.pool)
-        .await
-        .map_err(|e| {
-            eprintln!("create_first_generation: Failed to store WAVs: {}", e);
-            Redirect::to("/error")
-        })?;
-
-    // Update the app state to indicate that the first generation has been created.
+    // Mark first generation as created BEFORE WAV generation
+    // This allows the song queue to start working even if WAVs fail
     state.first_gen_created.store(true, Ordering::SeqCst);
+    println!("create_first_generation: Set first_gen_created=true");
+
+    // Try to generate WAV files - failures are logged but don't block the app
+    match store_current_generation_wavs(&state.pool).await {
+        Ok(()) => {
+            println!("create_first_generation: WAV files created successfully");
+        }
+        Err(e) => {
+            eprintln!("create_first_generation: WARNING - Failed to store WAVs: {}", e);
+            eprintln!("create_first_generation: The app will continue but audio playback may fail");
+            eprintln!("create_first_generation: Check directory permissions on audio/");
+        }
+    }
 
     Ok(Redirect::to("/"))
 }

@@ -22,10 +22,19 @@ rm -rf audio/generations audio/current audio/.current_new
 rm -rf data/greatest_hits/revisions data/greatest_hits/current data/greatest_hits/.current_new
 rm -f temp_adam.wav
 
-# Recreate directory structure
+# Recreate directory structure with correct permissions
+# The container runs as appuser (UID 1000 by default in Debian)
+# We need to make directories writable by the container
 echo "Recreating directory structure..."
 mkdir -p audio/generations
 mkdir -p data/greatest_hits/revisions
+
+# Make directories writable by anyone (simplest fix for dev)
+# This allows the container's appuser to write to these directories
+chmod -R 777 audio/
+chmod -R 777 data/
+
+echo "Set permissions on audio/ and data/ directories"
 
 # Start containers
 if [[ "$1" == "--rebuild" ]]; then

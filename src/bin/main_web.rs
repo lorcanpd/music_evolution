@@ -76,11 +76,42 @@ async fn rocket() -> _ {
         NonZeroUsize::new(AUDIO_CACHE_MAX_ENTRIES).unwrap()
     )));
 
+    // Check if generation 1 already exists in DB (for server restarts)
+    let first_gen_exists = {
+        match pool.get().await {
+            Ok(client) => {
+                match client.query_one(
+                    "SELECT COUNT(*) as count FROM songs WHERE generation = 1",
+                    &[]
+                ).await {
+                    Ok(row) => {
+                        let count: i64 = row.get("count");
+                        if count > 0 {
+                            println!("Found {} songs in generation 1, setting first_gen_created=true", count);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    Err(e) => {
+                        // Table might not exist yet
+                        println!("Could not check generation 1 (tables may not exist yet): {}", e);
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Could not connect to DB to check generation 1: {}", e);
+                false
+            }
+        }
+    };
+
     let app_state = AppState {
         pool: pool.clone(),
         audio_cache: audio_cache.clone(),
         reproduction_in_progress: Arc::new(AtomicBool::new(false)),
-        first_gen_created: Arc::new(AtomicBool::new(false)),
+        first_gen_created: Arc::new(AtomicBool::new(first_gen_exists)),
         task_queue: task_queue_sender, // Store the sender for enqueuing tasks.
         song_queue_sender: SongQueue {sender: song_queue_sender, count: Arc::new(AtomicUsize::new(0))}, // Store the sender for song queue.
         song_queue_receiver: song_queue_receiver.clone(), // Store the receiver for processing songs.

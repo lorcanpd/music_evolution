@@ -249,19 +249,39 @@ pub async fn post_choose_adam(
 // ------------------------------------------
 #[get("/rate_songs")]
 pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
+    use tokio::time::{timeout, Duration};
+
     if state.reproduction_in_progress.load(Ordering::SeqCst) {
         return Err(Redirect::to("/reproduction_message"));
     }
-    // Await a song ID from the pre‑fetched song queue.
+
+    // Check if first generation exists - if not, redirect to home
+    if !state.first_gen_created.load(Ordering::SeqCst) {
+        eprintln!("get_rate_songs: first_gen_created is false, redirecting to home");
+        return Err(Redirect::to("/"));
+    }
+
+    // Await a song ID from the pre‑fetched song queue with a timeout
     let song_id = {
         let mut rx = state.song_queue_receiver.lock().await;
-        let song = rx.recv().await.ok_or_else(|| {
-            eprintln!("Song queue closed unexpectedly.");
-            Redirect::to("/error")
-        })?;
-        // Notify the song queue that one song was consumed.
-        state.song_queue_sender.song_consumed();
-        song
+
+        // Wait up to 10 seconds for a song - this gives the queue time to populate
+        match timeout(Duration::from_secs(10), rx.recv()).await {
+            Ok(Some(song)) => {
+                // Notify the song queue that one song was consumed.
+                state.song_queue_sender.song_consumed();
+                song
+            }
+            Ok(None) => {
+                eprintln!("get_rate_songs: Song queue closed unexpectedly");
+                return Err(Redirect::to("/error"));
+            }
+            Err(_) => {
+                eprintln!("get_rate_songs: Timeout waiting for song from queue");
+                // Queue might be empty or stuck - try to redirect gracefully
+                return Err(Redirect::to("/"));
+            }
+        }
     };
 
     let content = html! {
