@@ -68,7 +68,8 @@ lazy_static! {
 pub struct AppState {
     pub pool: Pool,
     /// LRU-bounded audio cache (max AUDIO_CACHE_MAX_ENTRIES entries)
-    pub audio_cache: RwLock<LruCache<i32, Arc<Vec<u8>>>>,
+    /// Wrapped in Arc to allow sharing with task queue worker for cache clearing
+    pub audio_cache: Arc<RwLock<LruCache<i32, Arc<Vec<u8>>>>>,
     pub reproduction_in_progress: Arc<AtomicBool>,
     pub first_gen_created: Arc<AtomicBool>,
     pub task_queue: TaskQueue,

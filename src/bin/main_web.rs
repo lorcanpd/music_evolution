@@ -71,13 +71,14 @@ async fn rocket() -> _ {
 
     // Build the AppState, embedding the task queue sender.
     // Use LRU-bounded audio cache to limit memory usage
-    let audio_cache = LruCache::new(
+    // Wrap in Arc to allow sharing with task queue worker for cache clearing after reproduction
+    let audio_cache = Arc::new(RwLock::new(LruCache::new(
         NonZeroUsize::new(AUDIO_CACHE_MAX_ENTRIES).unwrap()
-    );
+    )));
 
     let app_state = AppState {
         pool: pool.clone(),
-        audio_cache: RwLock::new(audio_cache),
+        audio_cache: audio_cache.clone(),
         reproduction_in_progress: Arc::new(AtomicBool::new(false)),
         first_gen_created: Arc::new(AtomicBool::new(false)),
         task_queue: task_queue_sender, // Store the sender for enqueuing tasks.
@@ -98,6 +99,8 @@ async fn rocket() -> _ {
         .attach(AdHoc::on_liftoff("TaskQueue Worker", move |rocket| {
             // Capture the task queue receiver.
             let task_queue_rx = task_queue_rx;
+            // Capture audio_cache before moving into async block
+            let audio_cache_clone = audio_cache.clone();
             // Get the necessary state for the worker.
             let pool = rocket.state::<AppState>().unwrap().pool.clone();
             let reproduction_flag = rocket.state::<AppState>().unwrap().reproduction_in_progress.clone();
@@ -108,7 +111,7 @@ async fn rocket() -> _ {
                 // Spawn a background worker task that runs indefinitely.
                 rocket::tokio::spawn(async move {
                     run_task_queue(
-                        task_queue_rx, pool, reproduction_flag, notify_tx, song_queue_receiver
+                        task_queue_rx, pool, reproduction_flag, notify_tx, song_queue_receiver, audio_cache_clone
                     ).await;
                 });
             })

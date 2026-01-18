@@ -47,8 +47,8 @@ services:
       # Status file for reproduction status endpoint (dev uses local path)
       REPRODUCTION_STATUS_FILE: "${REPRODUCTION_STATUS_FILE:-/app/reproduction_status.json}"
     volumes:
-      # WAV output directory - persisted on host
-      - ./current_generation:/app/current_generation
+      # Audio directory - contains generation folders and current symlink
+      - ./audio:/app/audio
       # Static files for development hot-reload
       - ./static:/app/static:ro
       # Habitat config

@@ -1,5 +1,6 @@
 // src/task_queue.rs
 use tokio::sync::mpsc::{Receiver, Sender, channel};
+use tokio::sync::RwLock;
 use deadpool_postgres::Pool;
 use std::error::Error;
 use rocket::tokio::sync::broadcast::Sender as BroadcastSender;
@@ -7,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
+use lru::LruCache;
 use crate::reproduction::differential_reproduction;
 
 /// The Task enum holds tasks to be processed.
@@ -37,6 +39,7 @@ pub async fn run_task_queue(
     reproduction_flag: Arc<AtomicBool>,
     notify_tx: BroadcastSender<()>,
     song_queue_receiver: Arc<Mutex<Receiver<i32>>>,
+    audio_cache: Arc<RwLock<LruCache<i32, Arc<Vec<u8>>>>>,
 ) {
     while let Some(task) = rx.recv().await {
         match task {
@@ -54,7 +57,7 @@ pub async fn run_task_queue(
                 }
                 // Process reproduction.
                 if let Err(e) = process_reproduction(
-                    &pool, &notify_tx, &reproduction_flag, &song_queue_receiver
+                    &pool, &notify_tx, &reproduction_flag, &song_queue_receiver, &audio_cache
                 ).await {
                     eprintln!("Reproduction task error: {}", e);
                 }
@@ -68,6 +71,7 @@ async fn process_reproduction(
     notify_tx: &BroadcastSender<()>,
     reproduction_flag: &Arc<AtomicBool>,
     song_queue_receiver: &Arc<Mutex<Receiver<i32>>>,
+    audio_cache: &Arc<RwLock<LruCache<i32, Arc<Vec<u8>>>>>,
 ) -> Result<(), Box<dyn Error>> {
     let client = pool.get().await?;
     let row = client
@@ -76,6 +80,14 @@ async fn process_reproduction(
     let current_generation: i32 = row.get("curr_gen");
     println!("Task Queue: Current generation: {}", current_generation);
     differential_reproduction(current_generation, current_generation + 1, pool).await?;
+
+    // Clear the audio cache - the old generation's files are no longer valid
+    {
+        let mut cache = audio_cache.write().await;
+        cache.clear();
+        println!("Audio cache cleared after reproduction.");
+    }
+
     reproduction_flag.store(false, Ordering::SeqCst);
     let _ = notify_tx.send(());
 
@@ -84,7 +96,7 @@ async fn process_reproduction(
         let mut rx_lock = song_queue_receiver.lock().await;
         while let Ok(_value) = rx_lock.try_recv() {
             // We don't need the values; just draining.
-            eprintln!("Dropping pending rating task due to reproduction trigger");
+            eprintln!("Dropping pending song queue item due to reproduction");
         }
         println!("Song queue flushed after reproduction.");
     }

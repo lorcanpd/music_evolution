@@ -9,6 +9,7 @@ use crate::task_queue::{Task, TaskQueue};
 use crate::initialise_experiment::{create_generation_1, store_current_generation_wavs};
 use crate::reproduction::differential_reproduction;
 use crate::database::{create_database, populate_habitat_tables};
+use crate::audio_files;
 use crate::user_interaction::{get_choose_adam, post_choose_adam, get_rate_songs, post_rate_songs, AppState};
 use rocket::tokio::sync::broadcast::{self, Sender, error::RecvError};
 use rocket::response::stream::{Event, EventStream};
@@ -354,7 +355,8 @@ pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<Binar
         }
     }
     // If not cached, load the file asynchronously.
-    let filename = format!("current_generation/{}.wav", song_id);
+    // Use the audio_files module to get the correct serving path (follows symlink)
+    let filename = audio_files::serving_path().join(format!("{}.wav", song_id));
     match fs::read(&filename).await {
         Ok(data) => {
             let arc_data = Arc::new(data.clone());
@@ -364,7 +366,7 @@ pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<Binar
             Some(BinaryContent(data))
         },
         Err(e) => {
-            eprintln!("Error loading {}: {}", filename, e);
+            eprintln!("Error loading {}: {}", filename.display(), e);
             None
         }
     }

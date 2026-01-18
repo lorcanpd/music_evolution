@@ -8,7 +8,8 @@ use deadpool_postgres::Pool;
 use crate::genome::Genome;
 use crate::genome_crosser::GenomeCrosser;
 use crate::decode_genome::DecodedGenome;
-use crate::play_genes; // for generate_wav
+use crate::play_genes;
+use crate::audio_files;
 
 /// Run reproduction with explicit WAV output directory.
 /// Returns the number of songs created.
@@ -205,22 +206,27 @@ async fn differential_reproduction_impl(
         }
     }
 
-    // 6. Overwrite the current_generation folder with newly created songs
-    // Determine output directory
-    use std::fs;
-    let output_dir = wav_dir
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("current_generation"));
-
-    // Remove old and create new directory
-    if output_dir.exists() {
-        fs::remove_dir_all(&output_dir)?;
-    }
-    fs::create_dir_all(&output_dir)?;
+    // 6. Generate WAV files for the new generation
+    //    Use atomic directory swap to avoid "device busy" errors when files are being served
 
     let song_count = new_songs.len();
 
-    // for each new song, decode => generate wav
+    // Determine output directory based on whether we're using explicit path (Slurm) or managed dirs
+    let output_dir = if let Some(explicit_path) = wav_dir {
+        // Slurm mode: use explicit path, create if needed
+        use std::fs;
+        if explicit_path.exists() {
+            fs::remove_dir_all(explicit_path)?;
+        }
+        fs::create_dir_all(explicit_path)?;
+        explicit_path.to_path_buf()
+    } else {
+        // Development mode: use generation-numbered directory with atomic swap
+        audio_files::init_audio_dirs()?;
+        audio_files::create_generation_dir(next_generation)?
+    };
+
+    // Generate WAV files for each new song
     for song_id in &new_songs {
         let row = client.query_one(
             "SELECT genome FROM songs WHERE song_id=$1", &[song_id]).await?;
@@ -232,7 +238,17 @@ async fn differential_reproduction_impl(
         eprintln!("Generated WAV: {}", filename.display());
     }
 
-    // clear out the current_generation_fitness table
+    // Activate the new generation (atomic symlink swap) - only in development mode
+    if wav_dir.is_none() {
+        audio_files::activate_generation(next_generation)?;
+
+        // Clean up old generations (keep last 2 for safety)
+        if let Err(e) = audio_files::cleanup_old_generations(2) {
+            eprintln!("Warning: Failed to cleanup old generations: {}", e);
+        }
+    }
+
+    // Clear out the current_generation_fitness table
     client.execute("DELETE FROM current_generation_fitness", &[]).await?;
 
     eprintln!("Differential reproduction complete. Next generation = {}, songs created = {}", next_generation, song_count);

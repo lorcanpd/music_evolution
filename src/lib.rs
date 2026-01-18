@@ -10,3 +10,4 @@ pub mod genome_crosser;
 pub mod reproduction;
 pub mod task_queue;
 pub mod song_queue;
+pub mod audio_files;

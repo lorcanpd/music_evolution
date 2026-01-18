@@ -6,10 +6,9 @@ use crate::genome::Genome;
 use crate::genome_crosser::GenomeCrosser;
 use crate::decode_genome::DecodedGenome;
 use crate::play_genes;
+use crate::audio_files;
 use std::error::Error;
-use std::fs;
 use std::path::Path;
-use dotenv::dotenv;
 use crate::user_interaction;
 
 pub async fn create_adam_and_eve() -> Result<(Genome, Genome), Box<dyn Error>> {
@@ -20,17 +19,24 @@ pub async fn create_adam_and_eve() -> Result<(Genome, Genome), Box<dyn Error>> {
 }
 
 pub async fn store_current_generation_wavs(pool: &Pool) -> Result<(), Box<dyn Error>> {
-    fs::create_dir_all("current_generation")?;
+    // Initialize audio directory structure and create generation 1 directory
+    audio_files::init_audio_dirs()?;
+    let gen_dir = audio_files::create_generation_dir(1)?;
+
     let client = pool.get().await?;
     let rows = client.query("SELECT song_id, genome FROM songs WHERE generation=1", &[]).await?;
     for row in rows {
         let song_id: i32 = row.get("song_id");
         let genome: Genome = row.get("genome");
         let decoded = DecodedGenome::decode(&genome);
-        let filename = format!("current_generation/{}.wav", song_id);
-        play_genes::generate_wav(&decoded, &filename)?;
-        println!("Created WAV file for song_id={} at {}", song_id, filename);
+        let filename = gen_dir.join(format!("{}.wav", song_id));
+        play_genes::generate_wav(&decoded, filename.to_str().unwrap())?;
+        println!("Created WAV file for song_id={} at {}", song_id, filename.display());
     }
+
+    // Activate generation 1 (create the symlink)
+    audio_files::activate_generation(1)?;
+
     Ok(())
 }
 
@@ -99,9 +105,14 @@ pub async fn scrub_database(pool: &Pool) -> Result<(), Box<dyn Error>> {
     transaction.commit().await?;
     println!("Database scrubbed and sequences reset.");
 
+    // Clean up audio directories (handles symlinks properly)
+    audio_files::scrub_audio_dirs()?;
+    println!("Audio directories scrubbed.");
+
+    // Also remove legacy current_generation if it exists
     if Path::new("current_generation").exists() {
-        fs::remove_dir_all("current_generation")?;
-        println!("Removed current_generation folder.");
+        let _ = std::fs::remove_dir_all("current_generation");
     }
+
     Ok(())
 }
