@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 use lru::LruCache;
 use crate::reproduction::differential_reproduction;
+use crate::greatest_hits;
 
 /// The Task enum holds tasks to be processed.
 #[derive(Debug)]
@@ -79,7 +80,14 @@ async fn process_reproduction(
         .await?;
     let current_generation: i32 = row.get("curr_gen");
     println!("Task Queue: Current generation: {}", current_generation);
-    differential_reproduction(current_generation, current_generation + 1, pool).await?;
+    let next_generation = current_generation + 1;
+    differential_reproduction(current_generation, next_generation, pool).await?;
+
+    // Update greatest hits with the completed generation
+    if let Err(e) = greatest_hits::update_greatest_hits(pool, next_generation).await {
+        eprintln!("Warning: Failed to update greatest hits: {}", e);
+        // Don't fail the whole reproduction for greatest hits error
+    }
 
     // Clear the audio cache - the old generation's files are no longer valid
     {

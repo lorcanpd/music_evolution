@@ -68,8 +68,8 @@ COPY --from=builder /app/target/release/reproduce /app/
 COPY habitat_config.json /app/
 COPY static/ /app/static/
 
-# Create directories for audio files (generations + symlink structure)
-RUN mkdir -p /app/audio/generations && chown -R appuser:appuser /app
+# Create directories for audio files (generations + symlink structure) and data
+RUN mkdir -p /app/audio/generations /app/data/greatest_hits/revisions && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser

@@ -10,6 +10,7 @@ use crate::initialise_experiment::{create_generation_1, store_current_generation
 use crate::reproduction::differential_reproduction;
 use crate::database::{create_database, populate_habitat_tables};
 use crate::audio_files;
+use crate::greatest_hits;
 use crate::user_interaction::{get_choose_adam, post_choose_adam, get_rate_songs, post_rate_songs, AppState};
 use rocket::tokio::sync::broadcast::{self, Sender, error::RecvError};
 use rocket::response::stream::{Event, EventStream};
@@ -147,6 +148,9 @@ pub async fn index(state: &State<AppState>) -> Result<RawHtml<String>, Redirect>
             div class="btn-group" {
                 a href="/rate_songs" role="button" class="btn btn-primary" {
                     "Start Rating Songs"
+                }
+                a href="/greatest_hits" role="button" class="btn btn-secondary" {
+                    "Greatest Hits"
                 }
             }
         }
@@ -316,10 +320,7 @@ pub async fn reproduction_status() -> rocket::response::content::RawJson<String>
 async fn new_generation() -> RawHtml<String> {
     let content = html! {
         article class="card" {
-            div style="text-align: center;" {
-                span style="font-size: 4rem;" { "🎵" }
-            }
-            h2 style="text-align: center;" { "New Generation Created!" }
+            h2 style="text-align: center;" { "NEW GENERATION" }
             p style="text-align: center;" {
                 "The songs have evolved. A new generation of music awaits your judgment."
             }
@@ -400,10 +401,7 @@ pub fn reproduction_message() -> RawHtml<String> {
 pub fn error_page() -> RawHtml<String> {
     let content = html! {
         article class="card" {
-            div style="text-align: center;" {
-                span style="font-size: 4rem;" { "⚠️" }
-            }
-            h2 style="text-align: center;" { "Something Went Wrong" }
+            h2 style="text-align: center;" { "ERROR" }
             p style="text-align: center;" {
                 "An error occurred while processing your request. Please try again."
             }
@@ -416,6 +414,127 @@ pub fn error_page() -> RawHtml<String> {
     };
 
     RawHtml(base_layout("Error", content).into_string())
+}
+
+/// GET /greatest_hits - HTML page showing top rated songs
+#[get("/greatest_hits")]
+pub async fn greatest_hits_page() -> RawHtml<String> {
+    let has_data = greatest_hits::is_initialized();
+
+    let content = if has_data {
+        match greatest_hits::load_current_metadata() {
+            Ok(metadata) => {
+                html! {
+                    article class="card" {
+                        h2 { "Greatest Hits" }
+                        p {
+                            "The top " (metadata.songs.len()) " songs across all generations, "
+                            "ranked by listener approval."
+                        }
+                        p class="meta" {
+                            "Last updated: Generation " (metadata.trigger_generation)
+                        }
+
+                        div class="hits-list" {
+                            @for (rank, song) in metadata.songs.iter().enumerate() {
+                                div class="hit-entry" {
+                                    div class="hit-rank" { "#" (rank + 1) }
+                                    div class="hit-details" {
+                                        div class="hit-stats" {
+                                            span class="hit-score" {
+                                                (format!("{:.0}%", song.score * 100.0))
+                                            }
+                                            span class="hit-votes" {
+                                                (song.likes) " / " (song.likes + song.dislikes) " votes"
+                                            }
+                                        }
+                                        div class="hit-meta" {
+                                            "Gen " (song.generation) " | Song #" (song.song_id)
+                                        }
+                                    }
+                                    div class="hit-audio" {
+                                        audio controls preload="none" {
+                                            source src=(format!("/greatest_hits_wav/{}", song.song_id)) type="audio/wav";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    div style="text-align: center; margin-top: 2rem;" {
+                        a href="/" class="btn btn-secondary" { "Back to Home" }
+                    }
+                }
+            }
+            Err(e) => {
+                html! {
+                    article class="card" {
+                        h2 { "Greatest Hits" }
+                        div class="message message-error" {
+                            p { "Failed to load greatest hits data: " (e.to_string()) }
+                        }
+                        div class="btn-group" {
+                            a href="/" class="btn btn-secondary" { "Back to Home" }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        html! {
+            article class="card" {
+                h2 { "Greatest Hits" }
+                p {
+                    "No greatest hits data yet. Keep rating songs and the hall of fame "
+                    "will be populated after each generation completes."
+                }
+                div class="btn-group" {
+                    a href="/rate_songs" class="btn btn-primary" { "Start Rating" }
+                    a href="/" class="btn btn-secondary" { "Back to Home" }
+                }
+            }
+        }
+    };
+
+    RawHtml(base_layout("Greatest Hits", content).into_string())
+}
+
+/// GET /api/greatest_hits - JSON API endpoint
+#[get("/api/greatest_hits")]
+pub async fn greatest_hits_api() -> rocket::response::content::RawJson<String> {
+    if !greatest_hits::is_initialized() {
+        return rocket::response::content::RawJson(
+            r#"{"error": "No greatest hits data available"}"#.to_string()
+        );
+    }
+
+    match greatest_hits::load_current_metadata() {
+        Ok(metadata) => {
+            match serde_json::to_string(&metadata) {
+                Ok(json) => rocket::response::content::RawJson(json),
+                Err(e) => rocket::response::content::RawJson(
+                    format!(r#"{{"error": "Failed to serialize: {}"}}"#, e)
+                ),
+            }
+        }
+        Err(e) => rocket::response::content::RawJson(
+            format!(r#"{{"error": "Failed to load metadata: {}"}}"#, e)
+        ),
+    }
+}
+
+/// GET /greatest_hits_wav/<song_id> - serve WAV files from greatest hits archive
+#[get("/greatest_hits_wav/<song_id>")]
+pub async fn get_greatest_hits_wav(song_id: i32) -> Option<BinaryContent> {
+    let filename = greatest_hits::wav_file_path(song_id);
+    match fs::read(&filename).await {
+        Ok(data) => Some(BinaryContent(data)),
+        Err(e) => {
+            eprintln!("Error loading greatest hit wav {}: {}", filename.display(), e);
+            None
+        }
+    }
 }
 
 /// Combine all routes
@@ -436,6 +555,9 @@ pub fn routes() -> Vec<Route> {
         new_generation,
         ws,
         reproduction_message,
-        reproduction_status
+        reproduction_status,
+        greatest_hits_page,
+        greatest_hits_api,
+        get_greatest_hits_wav
     ]
 }

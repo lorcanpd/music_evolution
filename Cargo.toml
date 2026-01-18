@@ -19,6 +19,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
 deadpool-postgres = "0.10"
 lru = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
 
 [[bin]]
 name = "web_server"

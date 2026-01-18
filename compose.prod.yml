@@ -44,6 +44,8 @@ services:
       # Workers write to NFS, app reads via this mount
       # Note: audio/generations is not used in production (Slurm writes directly)
       - /srv/shared/music-evo/current_generation:/app/audio/current:ro
+      # Data directory - greatest hits archive (written by job runner)
+      - /srv/shared/music-evo/data:/app/data:ro
       # Access to shared NFS mount (for job status files)
       - /srv/shared/jobs/music-evo:/srv/shared/jobs/music-evo:ro
       # Habitat config

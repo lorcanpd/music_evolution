@@ -49,6 +49,8 @@ services:
     volumes:
       # Audio directory - contains generation folders and current symlink
       - ./audio:/app/audio
+      # Data directory - contains greatest hits archive
+      - ./data:/app/data
       # Static files for development hot-reload
       - ./static:/app/static:ro
       # Habitat config
