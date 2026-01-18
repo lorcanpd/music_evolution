@@ -30,9 +30,16 @@ pub async fn create_database(pool: &Pool) -> Result<(), Box<dyn Error>> {
         "CREATE TABLE IF NOT EXISTS dispersal_probabilities (
             from_node INT NOT NULL REFERENCES habitat(node),
             to_node INT NOT NULL REFERENCES habitat(node),
-            probability FLOAT NOT NULL
+            probability FLOAT NOT NULL,
+            UNIQUE (from_node, to_node)
         );
     ").await?;
+
+    // Add unique constraint if table already exists without it (migration for existing DBs)
+    let _ = client.batch_execute(
+        "ALTER TABLE dispersal_probabilities
+         ADD CONSTRAINT dispersal_probabilities_unique UNIQUE (from_node, to_node);"
+    ).await; // Ignore error if constraint already exists
 
     // Create the songs table
     client.batch_execute("
@@ -87,6 +94,18 @@ struct HabitatEdge {
 
 pub async fn populate_habitat_tables(pool: &Pool) -> Result<(), Box<dyn Error>> {
     let client = pool.get().await?;
+
+    // Check if habitat is already populated
+    let count: i64 = client
+        .query_one("SELECT COUNT(*) as count FROM habitat", &[])
+        .await?
+        .get("count");
+
+    if count > 0 {
+        println!("Habitat tables already populated ({} nodes), skipping.", count);
+        return Ok(());
+    }
+
     // Read the habitat configuration from a JSON file.
     let file = File::open("habitat_config.json")?;
     let reader = BufReader::new(file);
@@ -96,7 +115,7 @@ pub async fn populate_habitat_tables(pool: &Pool) -> Result<(), Box<dyn Error>> 
     // Insert nodes
     for node in &config.nodes {
         client.execute(
-            "INSERT INTO habitat (node, capacity) VALUES ($1, $2)",
+            "INSERT INTO habitat (node, capacity) VALUES ($1, $2) ON CONFLICT (node) DO NOTHING",
             &[&node.id, &node.capacity],
         ).await?;
     }
@@ -104,10 +123,12 @@ pub async fn populate_habitat_tables(pool: &Pool) -> Result<(), Box<dyn Error>> 
     // Insert edges
     for edge in &config.edges {
         client.execute(
-            "INSERT INTO dispersal_probabilities (from_node, to_node, probability) VALUES ($1, $2, $3)",
+            "INSERT INTO dispersal_probabilities (from_node, to_node, probability) VALUES ($1, $2, $3)
+             ON CONFLICT DO NOTHING",
             &[&edge.from_node, &edge.to_node, &(edge.probability as f64)],
         ).await?;
     }
 
+    println!("Habitat tables populated with {} nodes.", config.nodes.len());
     Ok(())
 }

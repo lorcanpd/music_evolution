@@ -117,15 +117,21 @@ chmod +x db-status.sh
 
 ## Troubleshooting
 
-### "relation does not exist" Error
+### "relation does not exist" or Foreign Key Error
 
-The database tables haven't been created. Visit the root URL `/` and you'll be redirected to `/initialise_experiment` to set up the database.
+The database tables haven't been created or habitat isn't populated. The homepage will show the appropriate action:
 
-If that doesn't work:
+1. Visit `http://localhost:8080`
+2. Click "Initialize Experiment" if shown
+3. Choose a primordial song (Adam)
+4. The first generation will be created automatically
+
+If you get stuck in a broken state:
 ```bash
-# Reset database
-docker compose down
-docker volume rm music_evo_postgres_data
+# Full reset - removes all data
+docker compose down -v
+rm -rf audio/generations audio/current data/greatest_hits/revisions data/greatest_hits/current
+mkdir -p audio/generations data/greatest_hits/revisions
 docker compose up -d
 ```
 

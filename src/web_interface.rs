@@ -231,8 +231,21 @@ async fn get_experiment_state(state: &State<AppState>) -> ExperimentState {
         }
         Ok(row) => {
             let count: i64 = row.get("count");
+
+            // First, verify habitat table is populated (required for foreign keys)
+            let habitat_count: i64 = client
+                .query_one("SELECT COUNT(*) as count FROM habitat", &[])
+                .await
+                .map(|r| r.get("count"))
+                .unwrap_or(0);
+
+            if habitat_count == 0 {
+                // Tables exist but habitat not populated - need full initialization
+                return ExperimentState::NotInitialized;
+            }
+
             if count == 0 {
-                // Tables exist but no Adam - check if tables were just created
+                // Tables exist, habitat populated, but no Adam yet
                 ExperimentState::NeedsAdam
             } else if count == 2 {
                 // Adam and Eve exist, check if generation 1 exists
