@@ -12,6 +12,27 @@ use lru::LruCache;
 use crate::reproduction::differential_reproduction;
 use crate::greatest_hits;
 
+/// A guard that ensures reproduction_in_progress is reset when dropped.
+/// This implements the RAII pattern to guarantee cleanup even on panic/error.
+struct ReproductionGuard {
+    flag: Arc<AtomicBool>,
+    notify_tx: BroadcastSender<()>,
+}
+
+impl ReproductionGuard {
+    fn new(flag: Arc<AtomicBool>, notify_tx: BroadcastSender<()>) -> Self {
+        Self { flag, notify_tx }
+    }
+}
+
+impl Drop for ReproductionGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::SeqCst);
+        let _ = self.notify_tx.send(());
+        eprintln!("ReproductionGuard: reproduction_in_progress set to false");
+    }
+}
+
 /// The Task enum holds tasks to be processed.
 #[derive(Debug)]
 pub enum Task {
@@ -74,6 +95,14 @@ async fn process_reproduction(
     song_queue_receiver: &Arc<Mutex<Receiver<i32>>>,
     audio_cache: &Arc<RwLock<LruCache<i32, Arc<Vec<u8>>>>>,
 ) -> Result<(), Box<dyn Error>> {
+    // Use a guard to ensure reproduction_in_progress is ALWAYS reset,
+    // even if we panic or return early with an error.
+    // The guard's Drop impl will set the flag to false.
+    let _reproduction_guard = ReproductionGuard::new(
+        reproduction_flag.clone(),
+        notify_tx.clone(),
+    );
+
     let client = pool.get().await?;
     let row = client
         .query_one("SELECT MAX(generation) as curr_gen FROM songs", &[])
@@ -81,11 +110,16 @@ async fn process_reproduction(
     let current_generation: i32 = row.get("curr_gen");
     println!("Task Queue: Current generation: {}", current_generation);
     let next_generation = current_generation + 1;
+
+    // Run differential reproduction - this is the core operation
     differential_reproduction(current_generation, next_generation, pool).await?;
 
     // Update greatest hits with the completed generation
-    if let Err(e) = greatest_hits::update_greatest_hits(pool, next_generation).await {
+    // Use the safe wrapper that catches panics and logs errors
+    // Greatest hits failure should NEVER block reproduction completion
+    if let Err(e) = greatest_hits::update_greatest_hits_safe(pool, next_generation).await {
         eprintln!("Warning: Failed to update greatest hits: {}", e);
+        eprintln!("Warning: Reproduction will continue despite greatest hits failure");
         // Don't fail the whole reproduction for greatest hits error
     }
 
@@ -96,8 +130,8 @@ async fn process_reproduction(
         println!("Audio cache cleared after reproduction.");
     }
 
-    reproduction_flag.store(false, Ordering::SeqCst);
-    let _ = notify_tx.send(());
+    // NOTE: reproduction_flag.store(false, ...) is handled by _reproduction_guard's Drop
+    // We don't need to manually reset it here anymore.
 
     // Flush the song queue: lock the receiver and drain any pending song IDs.
     {

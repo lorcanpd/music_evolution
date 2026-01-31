@@ -589,110 +589,184 @@ pub fn error_page() -> RawHtml<String> {
 }
 
 /// GET /greatest_hits - HTML page showing top rated songs
+/// Implements self-healing: if data is missing/corrupt, triggers a background rebuild.
 #[get("/greatest_hits")]
-pub async fn greatest_hits_page() -> RawHtml<String> {
-    let has_data = greatest_hits::is_initialized();
+pub async fn greatest_hits_page(state: &State<AppState>) -> RawHtml<String> {
+    // Check if a rebuild is in progress
+    if greatest_hits::is_rebuild_in_progress() {
+        let content = html! {
+            article class="card" {
+                h2 { "Greatest Hits" }
+                div class="spinner" {}
+                p style="text-align: center;" {
+                    "Greatest Hits is being rebuilt. This page will refresh automatically."
+                }
+                div class="btn-group" {
+                    a href="/" class="btn btn-secondary" { "Back to Home" }
+                }
+            }
+            script {
+                (PreEscaped("setTimeout(() => window.location.reload(), 5000);"))
+            }
+        };
+        return RawHtml(base_layout("Greatest Hits - Rebuilding", content).into_string());
+    }
 
-    let content = if has_data {
-        match greatest_hits::load_current_metadata() {
-            Ok(metadata) => {
-                html! {
-                    article class="card" {
-                        h2 { "Greatest Hits" }
-                        p {
-                            "The top " (metadata.songs.len()) " songs across all generations, "
-                            "ranked by listener approval."
-                        }
-                        p class="meta" {
-                            "Last updated: Generation " (metadata.trigger_generation)
-                        }
+    // Check health and trigger rebuild if needed
+    let is_healthy = greatest_hits::is_healthy();
+    if !is_healthy {
+        // Trigger background rebuild
+        greatest_hits::ensure_greatest_hits_background(state.pool.clone());
 
-                        div class="hits-list" {
-                            @for (rank, song) in metadata.songs.iter().enumerate() {
-                                div class="hit-entry" {
-                                    div class="hit-rank" { "#" (rank + 1) }
-                                    div class="hit-details" {
-                                        div class="hit-stats" {
-                                            span class="hit-score" {
-                                                (format!("{:.0}%", song.score * 100.0))
-                                            }
-                                            span class="hit-votes" {
-                                                (song.likes) " / " (song.likes + song.dislikes) " votes"
-                                            }
+        // Show rebuilding message
+        let status = greatest_hits::load_status();
+        let status_msg = status
+            .map(|s| format!("Status: {} ({})",
+                s.status,
+                s.last_error.unwrap_or_else(|| "no error".to_string())
+            ))
+            .unwrap_or_else(|| "Status: rebuilding...".to_string());
+
+        let content = html! {
+            article class="card" {
+                h2 { "Greatest Hits" }
+                div class="spinner" {}
+                p style="text-align: center;" {
+                    "Greatest Hits data is missing or corrupted. A rebuild has been triggered."
+                }
+                p class="meta" style="text-align: center;" {
+                    (status_msg)
+                }
+                p style="text-align: center;" {
+                    "This page will refresh automatically when the rebuild completes."
+                }
+                div class="btn-group" {
+                    a href="/greatest_hits" class="btn btn-primary" { "Retry" }
+                    a href="/" class="btn btn-secondary" { "Back to Home" }
+                }
+            }
+            script {
+                (PreEscaped("setTimeout(() => window.location.reload(), 5000);"))
+            }
+        };
+        return RawHtml(base_layout("Greatest Hits - Rebuilding", content).into_string());
+    }
+
+    // Data is healthy, display it
+    match greatest_hits::load_current_metadata() {
+        Ok(metadata) => {
+            let content = html! {
+                article class="card" {
+                    h2 { "Greatest Hits" }
+                    p {
+                        "The top " (metadata.songs.len()) " songs across all generations, "
+                        "ranked by listener approval."
+                    }
+                    p class="meta" {
+                        "Last updated: Generation " (metadata.trigger_generation)
+                    }
+
+                    div class="hits-list" {
+                        @for (rank, song) in metadata.songs.iter().enumerate() {
+                            div class="hit-entry" {
+                                div class="hit-rank" { "#" (rank + 1) }
+                                div class="hit-details" {
+                                    div class="hit-stats" {
+                                        span class="hit-score" {
+                                            (format!("{:.0}%", song.score * 100.0))
                                         }
-                                        div class="hit-meta" {
-                                            "Gen " (song.generation) " | Song #" (song.song_id)
+                                        span class="hit-votes" {
+                                            (song.likes) " / " (song.likes + song.dislikes) " votes"
                                         }
                                     }
-                                    div class="hit-audio" {
-                                        audio controls preload="none" {
-                                            source src=(format!("/greatest_hits_wav/{}", song.song_id)) type="audio/wav";
-                                        }
+                                    div class="hit-meta" {
+                                        "Gen " (song.generation) " | Song #" (song.song_id)
+                                    }
+                                }
+                                div class="hit-audio" {
+                                    audio controls preload="none" {
+                                        source src=(format!("/greatest_hits_wav/{}", song.song_id)) type="audio/wav";
                                     }
                                 }
                             }
                         }
                     }
+                }
 
-                    div style="text-align: center; margin-top: 2rem;" {
+                div style="text-align: center; margin-top: 2rem;" {
+                    a href="/" class="btn btn-secondary" { "Back to Home" }
+                }
+            };
+            RawHtml(base_layout("Greatest Hits", content).into_string())
+        }
+        Err(e) => {
+            // Metadata load failed despite health check - trigger rebuild
+            greatest_hits::ensure_greatest_hits_background(state.pool.clone());
+
+            let content = html! {
+                article class="card" {
+                    h2 { "Greatest Hits" }
+                    div class="message message-error" {
+                        p { "Failed to load greatest hits data: " (e.to_string()) }
+                    }
+                    p { "A rebuild has been triggered. Please try again shortly." }
+                    div class="btn-group" {
+                        a href="/greatest_hits" class="btn btn-primary" { "Retry" }
                         a href="/" class="btn btn-secondary" { "Back to Home" }
                     }
                 }
-            }
-            Err(e) => {
-                html! {
-                    article class="card" {
-                        h2 { "Greatest Hits" }
-                        div class="message message-error" {
-                            p { "Failed to load greatest hits data: " (e.to_string()) }
-                        }
-                        div class="btn-group" {
-                            a href="/" class="btn btn-secondary" { "Back to Home" }
-                        }
-                    }
+                script {
+                    (PreEscaped("setTimeout(() => window.location.reload(), 5000);"))
                 }
-            }
+            };
+            RawHtml(base_layout("Greatest Hits - Error", content).into_string())
         }
-    } else {
-        html! {
-            article class="card" {
-                h2 { "Greatest Hits" }
-                p {
-                    "No greatest hits data yet. Keep rating songs and the hall of fame "
-                    "will be populated after each generation completes."
-                }
-                div class="btn-group" {
-                    a href="/rate_songs" class="btn btn-primary" { "Start Rating" }
-                    a href="/" class="btn btn-secondary" { "Back to Home" }
-                }
-            }
-        }
-    };
-
-    RawHtml(base_layout("Greatest Hits", content).into_string())
+    }
 }
 
 /// GET /api/greatest_hits - JSON API endpoint
+/// Implements self-healing: if data is missing/corrupt, triggers a background rebuild.
 #[get("/api/greatest_hits")]
-pub async fn greatest_hits_api() -> rocket::response::content::RawJson<String> {
-    if !greatest_hits::is_initialized() {
+pub async fn greatest_hits_api(state: &State<AppState>) -> rocket::response::content::RawJson<String> {
+    // Check if rebuild is in progress
+    if greatest_hits::is_rebuild_in_progress() {
         return rocket::response::content::RawJson(
-            r#"{"error": "No greatest hits data available"}"#.to_string()
+            r#"{"status": "rebuilding", "message": "Greatest hits is being rebuilt"}"#.to_string()
         );
+    }
+
+    // Check health and trigger rebuild if needed
+    if !greatest_hits::is_healthy() {
+        greatest_hits::ensure_greatest_hits_background(state.pool.clone());
+
+        let status = greatest_hits::load_status();
+        let status_json = match status {
+            Some(s) => serde_json::to_string(&s).unwrap_or_else(|_| "{}".to_string()),
+            None => r#"{"status": "rebuilding", "message": "Rebuild triggered"}"#.to_string(),
+        };
+        return rocket::response::content::RawJson(status_json);
     }
 
     match greatest_hits::load_current_metadata() {
         Ok(metadata) => {
             match serde_json::to_string(&metadata) {
                 Ok(json) => rocket::response::content::RawJson(json),
-                Err(e) => rocket::response::content::RawJson(
-                    format!(r#"{{"error": "Failed to serialize: {}"}}"#, e)
-                ),
+                Err(e) => {
+                    // Trigger rebuild on serialization error
+                    greatest_hits::ensure_greatest_hits_background(state.pool.clone());
+                    rocket::response::content::RawJson(
+                        format!(r#"{{"error": "Failed to serialize: {}", "status": "rebuild_triggered"}}"#, e)
+                    )
+                }
             }
         }
-        Err(e) => rocket::response::content::RawJson(
-            format!(r#"{{"error": "Failed to load metadata: {}"}}"#, e)
-        ),
+        Err(e) => {
+            // Trigger rebuild on load error
+            greatest_hits::ensure_greatest_hits_background(state.pool.clone());
+            rocket::response::content::RawJson(
+                format!(r#"{{"error": "Failed to load metadata: {}", "status": "rebuild_triggered"}}"#, e)
+            )
+        }
     }
 }
 

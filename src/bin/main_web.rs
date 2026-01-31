@@ -15,6 +15,7 @@ use music_evo::web_interface;
 use music_evo::user_interaction::{AppState, AUDIO_CACHE_MAX_ENTRIES};
 use music_evo::task_queue::{TaskQueue, run_task_queue, run_threshold_checker};
 use music_evo::song_queue::{SongQueue, run_song_queue};
+use music_evo::greatest_hits;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
@@ -179,6 +180,28 @@ async fn rocket() -> _ {
                 rocket::tokio::spawn(async move {
                     run_song_queue(pool, reproduction_flag, first_gen_created, song_queue, 100).await;
                 });
+            })
+        }))
+        // Check greatest hits health on startup and trigger rebuild if needed.
+        // This runs in the background and does not block startup.
+        .attach(AdHoc::on_liftoff("Greatest Hits Health Check", move |rocket| {
+            let pool = rocket.state::<AppState>().unwrap().pool.clone();
+            let first_gen_created = rocket.state::<AppState>().unwrap().first_gen_created.clone();
+
+            Box::pin(async move {
+                // Only check if first generation exists (experiment is running)
+                if first_gen_created.load(std::sync::atomic::Ordering::SeqCst) {
+                    let is_healthy = greatest_hits::is_healthy();
+                    println!("Greatest Hits health check: {}", if is_healthy { "healthy" } else { "needs rebuild" });
+
+                    if !is_healthy {
+                        // Trigger background rebuild - does not block startup
+                        greatest_hits::ensure_greatest_hits_background(pool);
+                        println!("Greatest Hits: Background rebuild triggered");
+                    }
+                } else {
+                    println!("Greatest Hits: Skipping health check (first generation not created yet)");
+                }
             })
         }))
 
