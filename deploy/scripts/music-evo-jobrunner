@@ -21,11 +21,14 @@ if [[ -f "$CONFIG_FILE" ]]; then
 fi
 
 # Configuration with defaults
+# The timer may fire more frequently, but the script only performs a full
+# eligibility check once per interval.
 REPRO_INTERVAL_SECONDS="${REPRO_INTERVAL_SECONDS:-300}"  # 5 minutes default
+REPRO_RATINGS_PER_SONG="${REPRO_RATINGS_PER_SONG:-3}"
 JOBS_DIR="${JOBS_DIR:-/srv/shared/jobs/music-evo}"
 LOCK_FILE="${JOBS_DIR}/repro.lock"
 STATUS_FILE="${JOBS_DIR}/current_status.json"
-LAST_RUN_FILE="${JOBS_DIR}/last_run"
+LAST_CHECK_FILE="${JOBS_DIR}/last_check"
 DATABASE_URL="${DATABASE_URL:-}"
 WAV_DIR="${WAV_DIR:-/srv/shared/music-evo/current_generation}"
 SLURM_PARTITION="${SLURM_PARTITION:-musicevo}"
@@ -37,24 +40,28 @@ log() {
     echo "[$(date -Iseconds)] $*" >&2
 }
 
-# Check if we should run based on interval
-should_run_based_on_interval() {
-    if [[ ! -f "$LAST_RUN_FILE" ]]; then
-        return 0  # Never run before
+# Check if we should perform a full eligibility check based on interval
+should_check_based_on_interval() {
+    if [[ ! -f "$LAST_CHECK_FILE" ]]; then
+        return 0  # Never checked before
     fi
 
-    local last_run
-    last_run=$(cat "$LAST_RUN_FILE")
+    local last_check
+    last_check=$(cat "$LAST_CHECK_FILE")
     local now
     now=$(date +%s)
-    local elapsed=$((now - last_run))
+    local elapsed=$((now - last_check))
 
     if [[ $elapsed -ge $REPRO_INTERVAL_SECONDS ]]; then
-        return 0  # Enough time has passed
+        return 0  # Enough time has passed to check again
     else
-        log "Interval not reached: ${elapsed}s elapsed, need ${REPRO_INTERVAL_SECONDS}s"
+        log "Check interval not reached: ${elapsed}s elapsed, need ${REPRO_INTERVAL_SECONDS}s"
         return 1
     fi
+}
+
+record_check_time() {
+    date +%s > "$LAST_CHECK_FILE"
 }
 
 # Acquire lock (single-flight)
@@ -106,16 +113,72 @@ get_current_generation() {
     echo "$result"
 }
 
-# Check if there are songs to reproduce (generation > 0)
-has_songs_to_reproduce() {
-    local current_gen
-    current_gen=$(get_current_generation) || return 1
-
-    if [[ "$current_gen" -lt 1 ]]; then
-        log "No songs to reproduce (current generation: $current_gen)"
+# Get current generation, song count, and rating count in one query.
+get_reproduction_stats() {
+    if [[ -z "$DATABASE_URL" ]]; then
+        log "ERROR: DATABASE_URL not set"
         return 1
     fi
 
+    local result
+    result=$(psql "$DATABASE_URL" -t -A -F '|' -c "
+        WITH current_gen AS (
+            SELECT COALESCE(MAX(generation), 0) AS generation
+            FROM songs
+        )
+        SELECT
+            current_gen.generation,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM songs
+                WHERE generation = current_gen.generation
+            ), 0) AS song_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM current_generation_fitness
+            ), 0) AS rating_count
+        FROM current_gen
+    " 2>&1)
+    if [[ $? -ne 0 ]]; then
+        log "ERROR: Failed to query reproduction stats: $result"
+        return 1
+    fi
+
+    echo "$result"
+}
+
+# Check if the current generation has enough ratings to justify reproduction.
+threshold_reached() {
+    local stats
+    stats=$(get_reproduction_stats) || return 1
+
+    IFS='|' read -r current_gen song_count rating_count <<< "$stats"
+
+    if [[ "$current_gen" -lt 1 ]]; then
+        log "No songs to reproduce (current generation: $current_gen)"
+        write_status "idle" "No songs to reproduce yet" "null" "$current_gen" "$current_gen"
+        return 1
+    fi
+
+    if [[ "$song_count" -le 0 ]]; then
+        log "Current generation has no songs to reproduce"
+        write_status "idle" "Current generation has no songs" "null" "$current_gen" "$current_gen"
+        return 1
+    fi
+
+    local required_ratings=$((song_count * REPRO_RATINGS_PER_SONG))
+    if [[ "$rating_count" -lt "$required_ratings" ]]; then
+        log "Threshold not met: ${rating_count}/${required_ratings} ratings collected for generation ${current_gen}"
+        write_status \
+            "waiting_for_ratings" \
+            "Need ${required_ratings} ratings, have ${rating_count}" \
+            "null" \
+            "$current_gen" \
+            "$((current_gen + 1))"
+        return 1
+    fi
+
+    log "Threshold met: ${rating_count}/${required_ratings} ratings collected for generation ${current_gen}"
     return 0
 }
 
@@ -175,9 +238,6 @@ submit_job() {
     # Update status
     write_status "queued" "Job submitted" "$job_id" "$current_gen" "$next_gen"
 
-    # Record run time
-    date +%s > "$LAST_RUN_FILE"
-
     return 0
 }
 
@@ -192,13 +252,15 @@ main() {
     fi
 
     # Check interval
-    if ! should_run_based_on_interval; then
+    if ! should_check_based_on_interval; then
         exit 0
     fi
 
-    # Check if there are songs
-    if ! has_songs_to_reproduce; then
-        write_status "idle" "No songs to reproduce yet"
+    # Record that we performed a check, regardless of outcome
+    record_check_time
+
+    # Check if the rating threshold has been met
+    if ! threshold_reached; then
         exit 0
     fi
 

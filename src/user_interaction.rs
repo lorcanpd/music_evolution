@@ -6,6 +6,7 @@ use lazy_static::lazy_static;
 use rand::Rng;
 use rocket::{get, post, State};
 use rocket::form::{Form, FromForm};
+use rocket::http::{Cookie, CookieJar, SameSite};
 use rocket::response::{Redirect, content::RawHtml, status};
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 use deadpool_postgres::Pool;
@@ -91,6 +92,16 @@ pub struct AdamResponseForm {
 pub struct RatingForm {
     pub song_id: i32,
     pub rating: i32,
+    pub csrf_token: String,
+}
+
+const RATE_SONGS_CSRF_COOKIE: &str = "rate_songs_csrf";
+
+fn generate_csrf_token() -> String {
+    let mut rng = rand::thread_rng();
+    let mut bytes = [0u8; 32];
+    rng.fill(&mut bytes);
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 // ------------------------------------------
@@ -248,7 +259,10 @@ pub async fn post_choose_adam(
 // GET /rate_songs
 // ------------------------------------------
 #[get("/rate_songs")]
-pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, Redirect> {
+pub async fn get_rate_songs(
+    state: &State<AppState>,
+    cookies: &CookieJar<'_>,
+) -> Result<RawHtml<String>, Redirect> {
     use tokio::time::{timeout, Duration};
 
     if state.reproduction_in_progress.load(Ordering::SeqCst) {
@@ -284,6 +298,14 @@ pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, 
         }
     };
 
+    let csrf_token = generate_csrf_token();
+    cookies.add(
+        Cookie::build((RATE_SONGS_CSRF_COOKIE, csrf_token.clone()))
+            .http_only(true)
+            .same_site(SameSite::Strict)
+            .path("/")
+    );
+
     let content = html! {
         article class="card" {
             h2 { "Rate This Song" }
@@ -302,6 +324,7 @@ pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, 
 
             form action="/rate_songs" method="post" id="rating-form" {
                 input type="hidden" name="song_id" value=(song_id);
+                input type="hidden" name="csrf_token" value=(csrf_token);
                 div class="btn-group" {
                     button type="submit" name="rating" value="1" class="btn btn-primary" {
                         "I Like It"
@@ -326,11 +349,26 @@ pub async fn get_rate_songs(state: &State<AppState>) -> Result<RawHtml<String>, 
 // ------------------------------------------
 #[post("/rate_songs", data = "<form_data>")]
 pub async fn post_rate_songs(
-    state: &State<AppState>, form_data: Form<RatingForm>
+    state: &State<AppState>,
+    form_data: Form<RatingForm>,
+    cookies: &CookieJar<'_>,
 ) -> Result<Redirect, status::Custom<String>> {
     if state.reproduction_in_progress.load(Ordering::SeqCst) {
         return Ok(Redirect::to("/reproduction_message"));
     }
+
+    let cookie_token = cookies
+        .get(RATE_SONGS_CSRF_COOKIE)
+        .map(|cookie| cookie.value().to_string());
+    if cookie_token.as_deref() != Some(form_data.csrf_token.as_str()) {
+        return Err(status::Custom(
+            rocket::http::Status::Forbidden,
+            "Invalid CSRF token".to_string(),
+        ));
+    }
+
+    cookies.remove(Cookie::from(RATE_SONGS_CSRF_COOKIE));
+
     // Enqueue the rating task instead of directly updating the DB.
     state.task_queue.sender.send(Task::Rating {
         song_id: form_data.song_id,
@@ -371,6 +409,4 @@ pub fn choose_adam() -> Result<Genome, Box<dyn Error>> {
         }
     }
 }
-
-
 

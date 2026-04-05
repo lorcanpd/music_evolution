@@ -63,6 +63,7 @@ services:
     volumes:
       - /srv/services/music-evo/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - /srv/services/music-evo/nginx/conf.d:/etc/nginx/conf.d:ro
+      - /srv/services/music-evo/nginx/admin.htpasswd:/etc/nginx/admin.htpasswd:ro
       # TLS certificates (from Let's Encrypt or similar)
       - /srv/services/music-evo/certs:/etc/nginx/certs:ro
       # ACME challenge directory for Let's Encrypt

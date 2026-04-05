@@ -59,6 +59,27 @@ pub async fn static_files(file: PathBuf) -> Option<NamedFile> {
     NamedFile::open(Path::new("static/").join(file)).await.ok()
 }
 
+/// GET /health - minimal public health check
+#[get("/health")]
+pub async fn health(state: &State<AppState>) -> (rocket::http::Status, rocket::response::content::RawJson<String>) {
+    match state.pool.get().await {
+        Ok(client) => match client.query_one("SELECT 1", &[]).await {
+            Ok(_) => (
+                rocket::http::Status::Ok,
+                rocket::response::content::RawJson(r#"{"status":"ok"}"#.to_string()),
+            ),
+            Err(_) => (
+                rocket::http::Status::ServiceUnavailable,
+                rocket::response::content::RawJson(r#"{"status":"degraded"}"#.to_string()),
+            ),
+        },
+        Err(_) => (
+            rocket::http::Status::ServiceUnavailable,
+            rocket::response::content::RawJson(r#"{"status":"degraded"}"#.to_string()),
+        ),
+    }
+}
+
 #[get("/ws")]
 pub async fn ws(notify_tx: &State<Sender<()>>) -> EventStream![] {
     let mut rx = notify_tx.subscribe();
@@ -787,6 +808,7 @@ pub async fn get_greatest_hits_wav(song_id: i32) -> Option<BinaryContent> {
 pub fn routes() -> Vec<Route> {
     routes![
         index,
+        health,
         static_files,
         get_temp_adam_wav,
         get_song_wav,

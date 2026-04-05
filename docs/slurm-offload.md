@@ -84,7 +84,8 @@ The job runner runs on martin as a systemd timer:
 3. **Script** (`music-evo-jobrunner`) checks if reproduction is due:
    - Enforces `REPRO_INTERVAL_SECONDS` (default: 5 minutes)
    - Acquires lock (`/srv/shared/jobs/music-evo/repro.lock`)
-   - Checks if songs exist to reproduce
+   - Checks whether the rating threshold has been met
+   - Confirms no reproduction job is already queued/running
    - Submits sbatch job to `musicevo` partition
 
 ### 2. Job Execution
@@ -163,8 +164,11 @@ sudo nano /etc/music-evo/jobrunner.env
 
 Edit the configuration:
 ```bash
-# How often to run reproduction (seconds)
+# How often to check whether reproduction should run (seconds)
 REPRO_INTERVAL_SECONDS=300
+
+# Submit reproduction only when enough ratings are collected
+REPRO_RATINGS_PER_SONG=3
 
 # Database connection (must be reachable from martin AND workers)
 DATABASE_URL=postgres://musicevo:YOUR_PASSWORD@martin:5432/musicevo
@@ -335,25 +339,29 @@ sudo chown -R musicevo:musicevo /srv/shared/jobs/music-evo/
 sudo chown -R musicevo:musicevo /srv/shared/music-evo/
 ```
 
-## Tuning REPRO_INTERVAL_SECONDS
+## Tuning Reproduction Checks
 
-The reproduction interval controls how often new generations are created.
+The job runner checks every `REPRO_INTERVAL_SECONDS`, and only submits a Slurm
+job when the rating threshold has been met.
 
 ```bash
 # Edit configuration
 sudo nano /etc/music-evo/jobrunner.env
 
-# Change interval (in seconds)
-REPRO_INTERVAL_SECONDS=600  # 10 minutes
+# Example settings
+REPRO_INTERVAL_SECONDS=300
+REPRO_RATINGS_PER_SONG=3
 
 # Restart timer to apply
 sudo systemctl restart music-evo-jobrunner.timer
 ```
 
 Considerations:
-- **Shorter interval**: More generations, but less ratings per generation
-- **Longer interval**: More ratings per generation, slower evolution
-- **Recommended**: Start with 300-600 seconds and adjust based on usage
+- **Lower multiplier**: Faster generation turnover, weaker fitness signal
+- **Higher multiplier**: Stronger fitness signal, but slower turnover
+- **Shorter interval**: Threshold is checked more often
+- **Longer interval**: Threshold is checked less often
+- **Recommended**: Start with `REPRO_INTERVAL_SECONDS=300` and `REPRO_RATINGS_PER_SONG=3`
 
 ## Development Mode (No Slurm)
 

@@ -184,8 +184,11 @@ sudo nano /etc/music-evo/jobrunner.env
 **Edit `/etc/music-evo/jobrunner.env`:**
 
 ```bash
-# How often to run reproduction (seconds) - default 5 minutes
+# How often to check whether reproduction should run (seconds)
 REPRO_INTERVAL_SECONDS=300
+
+# Submit reproduction only when enough ratings are collected
+REPRO_RATINGS_PER_SONG=3
 
 # Database connection (must be reachable from martin AND workers)
 DATABASE_URL=postgres://musicevo:YOUR_PASSWORD@localhost:5432/musicevo
@@ -226,19 +229,32 @@ squeue -u musicevo
 cat /srv/shared/jobs/music-evo/current_status.json | jq
 ```
 
-### Tuning REPRO_INTERVAL_SECONDS
+### Tuning Reproduction Checks
 
-The interval controls how often new generations are created:
+The job runner now checks every `REPRO_INTERVAL_SECONDS`, and only submits a
+Slurm job if all of the following are true:
 
-- **Shorter interval** (e.g., 120s): More generations, fewer ratings per generation
-- **Longer interval** (e.g., 600s): More ratings per generation, slower evolution
-- **Recommended**: Start with 300-600 seconds and adjust based on traffic
+- no reproduction job is already queued/running
+- generation 1 or later exists
+- `rating_count >= current_generation_song_count * REPRO_RATINGS_PER_SONG`
 
-To change the interval:
+Recommended starting point:
+
+- `REPRO_INTERVAL_SECONDS=300`
+- `REPRO_RATINGS_PER_SONG=3`
+
+Tradeoffs:
+
+- **Lower multiplier** (e.g., `2`): faster generation turnover, weaker fitness signal
+- **Higher multiplier** (e.g., `4`): stronger fitness signal, but can stall under low traffic
+- **Shorter interval**: threshold is checked more often
+- **Longer interval**: threshold is checked less often
+
+To change the behavior:
 
 ```bash
 sudo nano /etc/music-evo/jobrunner.env
-# Change REPRO_INTERVAL_SECONDS value
+# Change REPRO_INTERVAL_SECONDS and/or REPRO_RATINGS_PER_SONG
 sudo systemctl restart music-evo-jobrunner.timer
 ```
 
