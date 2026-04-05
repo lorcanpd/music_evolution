@@ -37,6 +37,12 @@ fn base_layout(title: &str, content: Markup) -> Markup {
                     (content)
                     footer {
                         p { "An evolutionary music experiment" }
+                        p class="support-note" {
+                            "If you'd like to support this project, "
+                            a href="https://buymeacoffee.com/lorcanpd" target="_blank" rel="noopener noreferrer" {
+                                "buy me a coffee"
+                            }
+                        }
                     }
                 }
             }
@@ -409,4 +415,3 @@ pub fn choose_adam() -> Result<Genome, Box<dyn Error>> {
         }
     }
 }
-

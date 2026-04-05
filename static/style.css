@@ -34,6 +34,11 @@
     --pico-color: var(--color-text);
     --pico-primary: var(--color-accent);
     --pico-primary-hover: var(--color-accent-dim);
+    --pico-primary-background: var(--color-text);
+    --pico-primary-hover-background: var(--color-bg);
+    --pico-primary-border: var(--color-text);
+    --pico-primary-hover-border: var(--color-text);
+    --pico-primary-inverse: var(--color-bg);
     --pico-border-radius: 0;
     --pico-card-background-color: var(--color-surface);
     --pico-card-border-color: var(--color-border);
@@ -175,7 +180,7 @@ audio {
     margin-top: var(--space-xl);
 }
 
-button, .btn, [role="button"] {
+button, .btn, a[role="button"], [role="button"] {
     display: inline-block;
     padding: var(--space-md) var(--space-xl);
     font-family: var(--font-sans);
@@ -186,37 +191,48 @@ button, .btn, [role="button"] {
     text-decoration: none;
     cursor: pointer;
     border: 2px solid var(--color-border-strong);
+    background-color: transparent;
+    color: var(--color-text);
+    box-shadow: none;
     transition: all 0.15s ease;
 }
 
 .btn-primary,
+a[role="button"].btn-primary,
+button.btn-primary,
 button[type="submit"][value="yes"],
 button[type="submit"][value="1"] {
-    background: var(--color-text);
+    background-color: var(--color-text);
     color: var(--color-bg);
     border-color: var(--color-text);
 }
 
 .btn-primary:hover,
+a[role="button"].btn-primary:hover,
+button.btn-primary:hover,
 button[type="submit"][value="yes"]:hover,
 button[type="submit"][value="1"]:hover {
-    background: var(--color-bg);
+    background-color: var(--color-bg);
     color: var(--color-text);
 }
 
 .btn-secondary,
+a[role="button"].btn-secondary,
+button.btn-secondary,
 button[type="submit"][value="no"],
 button[type="submit"][value="0"] {
-    background: transparent;
+    background-color: transparent;
     color: var(--color-text);
     border-color: var(--color-border);
 }
 
 .btn-secondary:hover,
+a[role="button"].btn-secondary:hover,
+button.btn-secondary:hover,
 button[type="submit"][value="no"]:hover,
 button[type="submit"][value="0"]:hover {
     border-color: var(--color-text);
-    background: var(--color-surface-raised);
+    background-color: var(--color-surface-raised);
 }
 
 /* Status indicators */
@@ -333,6 +349,23 @@ footer p {
     text-transform: uppercase;
     letter-spacing: 0.1em;
     margin: 0;
+}
+
+footer .support-note {
+    margin-top: var(--space-sm);
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--color-text-muted);
+}
+
+footer .support-note a {
+    color: var(--color-text);
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+}
+
+footer .support-note a:hover {
+    color: var(--color-accent-dim);
 }
 
 /* Generation info - bold stats */
