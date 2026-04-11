@@ -23,10 +23,14 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use serde::{Deserialize, Serialize};
 use deadpool_postgres::Pool;
-use tokio::sync::Mutex;
 use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
+
+use crate::decode_genome::DecodedGenome;
+use crate::genome::Genome;
+use crate::play_genes;
 
 /// Global lock to prevent concurrent rebuilds (single-flight pattern)
 static REBUILD_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -331,15 +335,20 @@ pub fn load_current_metadata() -> Result<GreatestHitsMetadata, Box<dyn Error>> {
     Ok(metadata)
 }
 
-/// Copy a WAV file from source to the revision's audio directory.
-pub fn copy_wav_to_revision(revision: i32, song_id: i32, source_path: &PathBuf) -> io::Result<()> {
+/// Generate a WAV file for a greatest-hit song directly from its genome.
+pub fn generate_wav_to_revision(
+    revision: i32,
+    song_id: i32,
+    genome: &Genome,
+) -> Result<(), Box<dyn Error>> {
     let dest_path = audio_path(revision).join(format!("{}.wav", song_id));
-    fs::copy(source_path, dest_path)?;
+    let decoded = DecodedGenome::decode(genome);
+    play_genes::generate_wav(&decoded, dest_path.to_str().unwrap())?;
     Ok(())
 }
 
 /// Compute and update greatest hits after a generation completes.
-/// This queries the database for all-time top songs and copies their WAVs.
+/// This queries the database for all-time top songs and regenerates their WAVs.
 ///
 /// This function is designed to never panic. All errors are returned as Result::Err.
 pub async fn update_greatest_hits(
@@ -419,6 +428,7 @@ pub async fn update_greatest_hits(
             s.song_id,
             s.generation,
             s.node,
+            s.genome,
             s.parent1_id,
             s.parent2_id,
             COALESCE(c.total_likes, 0::bigint) as likes,
@@ -446,7 +456,6 @@ pub async fn update_greatest_hits(
     create_revision_dir(revision)?;
 
     let mut entries = Vec::new();
-    let audio_serving = crate::audio_files::serving_path();
 
     for row in &rows {
         // Use try_get with explicit error handling to avoid panics
@@ -460,6 +469,13 @@ pub async fn update_greatest_hits(
         };
         let generation: i32 = row.try_get("generation").unwrap_or(0);
         let node: i32 = row.try_get("node").unwrap_or(0);
+        let genome: Genome = match row.try_get("genome") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Warning: Failed to get genome for song {}: {}", song_id, e);
+                continue;
+            }
+        };
         let parent1_id: Option<i32> = row.try_get("parent1_id").ok().flatten();
         let parent2_id: Option<i32> = row.try_get("parent2_id").ok().flatten();
 
@@ -496,34 +512,8 @@ pub async fn update_greatest_hits(
             }
         };
 
-        // Copy WAV file to revision
-        // First try current generation audio
-        let source_wav = audio_serving.join(format!("{}.wav", song_id));
-        if source_wav.exists() {
-            if let Err(e) = copy_wav_to_revision(revision, song_id, &source_wav) {
-                eprintln!("Warning: Failed to copy WAV for song {}: {}", song_id, e);
-            }
-        } else {
-            // Try to find in older generation directories
-            let gens_path = crate::audio_files::generations_path();
-            if gens_path.exists() {
-                let mut found = false;
-                if let Ok(entries_dir) = fs::read_dir(&gens_path) {
-                    for entry in entries_dir.flatten() {
-                        let wav_path = entry.path().join(format!("{}.wav", song_id));
-                        if wav_path.exists() {
-                            if let Err(e) = copy_wav_to_revision(revision, song_id, &wav_path) {
-                                eprintln!("Warning: Failed to copy WAV for song {}: {}", song_id, e);
-                            }
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-                if !found {
-                    eprintln!("Warning: WAV not found for song {}", song_id);
-                }
-            }
+        if let Err(e) = generate_wav_to_revision(revision, song_id, &genome) {
+            eprintln!("Warning: Failed to generate greatest-hit WAV for song {}: {}", song_id, e);
         }
 
         entries.push(GreatestHitEntry {
