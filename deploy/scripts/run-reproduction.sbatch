@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=4G
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=3500M
 #SBATCH --time=00:30:00
 # Note: --partition, --job-name, --output, --error are set by jobrunner
 
