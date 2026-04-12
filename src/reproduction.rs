@@ -106,10 +106,11 @@ async fn differential_reproduction_impl(
     }
 
     // 4. Determine migrations and use that to determine parentage of child slots.
-    // For each node, use the to_node probabilities to determine which parents slots are to be
-    // assigned to other nodes.
+    // For each destination node, create exactly `capacity(destination)` child slots.
+    // Each slot samples its source population from the incoming dispersal probabilities,
+    // falling back to local reproduction when no migration is selected.
     let habitat_rows = client.query(
-        "SELECT node, capacity FROM habitat", &[]).await?;
+        "SELECT node, capacity FROM habitat WHERE node > 0", &[]).await?;
     let mut node_capacities = vec![];
     for row in habitat_rows {
         let node_id: i32 = row.get("node");
@@ -119,91 +120,94 @@ async fn differential_reproduction_impl(
 
     let dispersal_rows = client.query(
         "SELECT from_node, to_node, probability FROM dispersal_probabilities", &[]).await?;
-    // get the total capacity of each node and then determine which of these are to be populated
-    // for another node.
-    // Dispersal probabilities are a hash map of hash maps, where the key is the from_node and the
-    // value is a veector of all the to_nodes and their probability tuple pairs.
+    // Incoming dispersal probabilities keyed by destination node.
     let mut dispersal_probabilities: HashMap<i32, Vec<(i32, f64)>> = HashMap::new();
-    // let mut dispersal_probabilities: HashMap<i32, HashMap<i32, f64>> = HashMap::new();
     for row in dispersal_rows {
         let from_node: i32 = row.get("from_node");
         let to_node: i32 = row.get("to_node");
         let probability: f64 = row.get("probability");
-        // need the data in a hash map that uses the to_node as the key, returning a vector
-        // containing the tuples of from_node and probability
         let entry = dispersal_probabilities.entry(to_node).or_default();
         entry.push((from_node, probability));
     }
 
-    // Then for each node we iterate through the nodes to create a reproduction plan of
-    // (parent_node, child_node) for every slot. By default, the child_node is the same as the
-    // parent_node, unless the child_node is to be populated by another node.
-    // let mut reproduction_plan: HashMap<i32, Vec<(i32, i32)>> = HashMap::new();
-    let mut plan = vec![];
-    for (node, _) in node_capacities.clone() {
-        let dispersal = dispersal_probabilities.get(&node);
-        if let Some(dispersal) = dispersal {
-            // if there are dispersal probabilities for this node, we need to determine which
-            // slots are to be populated by other nodes.
-            let mut rng = rand::thread_rng();
-            // loop through the dispersal from_node and probability pairs in the dispersal vector.
-            // if the random number is less than the probability, then the slot is to be populated
-            // by the from_node.
-            for (from_node, probability) in dispersal {
-                let roll = rng.gen_range(0.0..1.0);
-                if roll <= *probability {
-                    plan.push((*from_node, node));
+    // Build a plan of (source_node, destination_node), one entry per destination slot.
+    let plan = {
+        let mut plan = vec![];
+        let mut rng = rand::thread_rng();
+
+        for (dest_node, capacity) in &node_capacities {
+            let incoming = dispersal_probabilities.get(dest_node);
+            for _ in 0..*capacity {
+                let source_node = if let Some(incoming) = incoming {
+                    let roll = rng.gen_range(0.0..1.0);
+                    let mut cumulative = 0.0;
+                    let mut selected = *dest_node;
+
+                    for (from_node, probability) in incoming {
+                        cumulative += *probability;
+                        if roll <= cumulative {
+                            selected = *from_node;
+                            break;
+                        }
+                    }
+
+                    selected
                 } else {
-                    plan.push((node, node));
-                }
+                    *dest_node
+                };
+
+                plan.push((source_node, *dest_node));
             }
         }
-    }
 
-    // 5. For each node, fill 'capacity' child slots from that same node
-    //    using WeightedChoice on 'node_fitness[node]' to pick parents
-    //    Insert new songs into DB with generation=next_generation
-    //    Then create .wav files
+        plan
+    };
 
-    // We'll store newly created songs in order to generate wav files
+    // 5. Fill each destination slot by sampling parents from the chosen source population.
+    // Existing generations may already have inconsistent per-node counts; if a chosen source node
+    // has no songs, fall back to the destination node instead of forcing a reset.
     let mut new_songs = vec![];
 
-    for (node, dest_node) in plan {
+    for (source_node, dest_node) in plan {
+        let fits = node_fitness
+            .get(&source_node)
+            .or_else(|| node_fitness.get(&dest_node))
+            .ok_or_else(|| {
+                format!(
+                    "No source songs available for reproduction slot: source node {}, destination node {}",
+                    source_node, dest_node
+                )
+            })?;
 
-        let fits = node_fitness.get(&node).unwrap();
+        // pick two parents
+        let (parent1_id, parent2_id) = pick_parents(fits)?;
+        // retrieve the actual genome from the DB
+        let father_genome: Genome = client.query_one(
+            "SELECT genome FROM songs WHERE song_id=$1", &[&parent1_id]
+        ).await?.get("genome");
+        let mother_genome: Genome = client.query_one(
+            "SELECT genome FROM songs WHERE song_id=$1", &[&parent2_id]
+        ).await?.get("genome");
 
-        let capacity = node_capacities.iter().find(|(id, _)| *id == node).unwrap().1;
-        for _ in 0..capacity {
-            // pick two parents
-            let (parent1_id, parent2_id) = pick_parents(fits)?;
-            // retrieve the actual genome from the DB
-            let father_genome: Genome = client.query_one(
-                "SELECT genome FROM songs WHERE song_id=$1", &[&parent1_id]
-            ).await?.get("genome");
-            let mother_genome: Genome = client.query_one(
-                "SELECT genome FROM songs WHERE song_id=$1", &[&parent2_id]
-            ).await?.get("genome");
+        // crossover => child
+        let child_genome = GenomeCrosser::crossover(&father_genome, &mother_genome);
 
-            // crossover => child
-            let child_genome = GenomeCrosser::crossover(&father_genome, &mother_genome);
+        // Insert child
+        let row = client.query_one(
+            "INSERT INTO songs (generation, node, genome, parent1_id, parent2_id)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING song_id",
+            &[
+                &next_generation,
+                &dest_node,
+                &child_genome,
+                &parent1_id,
+                &parent2_id
+            ],
+        ).await?;
+        let child_id: i32 = row.get(0);
 
-            // Insert child
-            let row = client.query_one(
-                "INSERT INTO songs (generation, node, genome, parent1_id, parent2_id)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING song_id",
-                &[
-                    &next_generation,
-                    &dest_node,
-                    &child_genome,
-                    &parent1_id,
-                    &parent2_id
-                ],
-            ).await?;
-            let child_id: i32 = row.get(0);
-
-            new_songs.push(child_id);
-        }
+        new_songs.push(child_id);
     }
 
     // 6. Generate WAV files for the new generation
@@ -299,4 +303,3 @@ fn weighted_choice(fits: &[(i32, f64)]) -> Result<i32, Box<dyn Error>> {
     // fallback: if rounding errors, pick the last
     Ok(fits.last().unwrap().0)
 }
-
