@@ -639,9 +639,9 @@ pub async fn greatest_hits_page(state: &State<AppState>) -> RawHtml<String> {
         return RawHtml(base_layout("Greatest Hits - Rebuilding", content).into_string());
     }
 
-    // Check health and trigger rebuild if needed
-    let is_healthy = greatest_hits::is_healthy();
-    if !is_healthy {
+    // Check health/staleness and trigger rebuild if needed
+    let needs_rebuild = greatest_hits::needs_rebuild(&state.pool).await.unwrap_or(true);
+    if needs_rebuild {
         // Trigger background rebuild
         greatest_hits::ensure_greatest_hits_background(state.pool.clone());
 
@@ -659,7 +659,7 @@ pub async fn greatest_hits_page(state: &State<AppState>) -> RawHtml<String> {
                 h2 { "Greatest Hits" }
                 div class="spinner" {}
                 p style="text-align: center;" {
-                    "Greatest Hits data is missing or corrupted. A rebuild has been triggered."
+                    "Greatest Hits data is missing, stale, or corrupted. A rebuild has been triggered."
                 }
                 p class="meta" style="text-align: center;" {
                     (status_msg)
@@ -762,8 +762,8 @@ pub async fn greatest_hits_api(state: &State<AppState>) -> rocket::response::con
         );
     }
 
-    // Check health and trigger rebuild if needed
-    if !greatest_hits::is_healthy() {
+    // Check health/staleness and trigger rebuild if needed
+    if greatest_hits::needs_rebuild(&state.pool).await.unwrap_or(true) {
         greatest_hits::ensure_greatest_hits_background(state.pool.clone());
 
         let status = greatest_hits::load_status();

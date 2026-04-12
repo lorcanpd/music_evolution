@@ -191,10 +191,10 @@ async fn rocket() -> _ {
             Box::pin(async move {
                 // Only check if first generation exists (experiment is running)
                 if first_gen_created.load(std::sync::atomic::Ordering::SeqCst) {
-                    let is_healthy = greatest_hits::is_healthy();
-                    println!("Greatest Hits health check: {}", if is_healthy { "healthy" } else { "needs rebuild" });
+                    let needs_rebuild = greatest_hits::needs_rebuild(&pool).await.unwrap_or(true);
+                    println!("Greatest Hits health check: {}", if needs_rebuild { "needs rebuild" } else { "healthy" });
 
-                    if !is_healthy {
+                    if needs_rebuild {
                         // Trigger background rebuild - does not block startup
                         greatest_hits::ensure_greatest_hits_background(pool);
                         println!("Greatest Hits: Background rebuild triggered");

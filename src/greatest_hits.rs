@@ -335,6 +335,35 @@ pub fn load_current_metadata() -> Result<GreatestHitsMetadata, Box<dyn Error>> {
     Ok(metadata)
 }
 
+/// Get the latest generation number present in the songs table.
+pub async fn latest_generation(pool: &Pool) -> Result<i32, Box<dyn Error + Send + Sync>> {
+    let client = pool.get().await?;
+    let current_gen: i32 = client
+        .query_one("SELECT COALESCE(MAX(generation), 1) as gen FROM songs", &[])
+        .await?
+        .get("gen");
+    Ok(current_gen)
+}
+
+/// Determine whether greatest hits should be rebuilt.
+///
+/// Rebuild is required if:
+/// - the on-disk archive is structurally unhealthy, or
+/// - the archive was built for an older generation than currently exists in the database.
+pub async fn needs_rebuild(pool: &Pool) -> Result<bool, Box<dyn Error + Send + Sync>> {
+    if !is_healthy() {
+        return Ok(true);
+    }
+
+    let metadata = match load_current_metadata() {
+        Ok(metadata) => metadata,
+        Err(_) => return Ok(true),
+    };
+
+    let current_gen = latest_generation(pool).await?;
+    Ok(metadata.trigger_generation < current_gen)
+}
+
 /// Generate a WAV file for a greatest-hit song directly from its genome.
 pub fn generate_wav_to_revision(
     revision: i32,
@@ -583,8 +612,8 @@ pub async fn update_greatest_hits_safe(
 pub async fn ensure_greatest_hits(
     pool: &Pool,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    // Fast path: if healthy, return immediately
-    if is_healthy() {
+    // Fast path: if healthy and current, return immediately
+    if !needs_rebuild(pool).await? {
         return Ok(());
     }
 
@@ -603,14 +632,14 @@ pub async fn ensure_greatest_hits(
         }
     };
 
-    // Double-check health after acquiring lock
-    if is_healthy() {
+    // Double-check state after acquiring lock
+    if !needs_rebuild(pool).await? {
         return Ok(());
     }
 
     // Set rebuild in progress flag
     REBUILD_IN_PROGRESS.store(true, Ordering::SeqCst);
-    eprintln!("Greatest hits: Data is missing or corrupt, triggering rebuild");
+    eprintln!("Greatest hits: Data is missing, stale, or corrupt, triggering rebuild");
 
     // Update status
     let _ = save_status(&GreatestHitsStatus {
@@ -621,13 +650,7 @@ pub async fn ensure_greatest_hits(
     });
 
     // Get the current generation from the database
-    let client = pool.get().await?;
-    let current_gen: i32 = client
-        .query_one("SELECT COALESCE(MAX(generation), 1) as gen FROM songs", &[])
-        .await
-        .map(|r| r.get("gen"))
-        .unwrap_or(1);
-    drop(client);
+    let current_gen = latest_generation(pool).await?;
 
     // Perform the rebuild
     let result = update_greatest_hits_safe(pool, current_gen).await;
@@ -642,7 +665,7 @@ pub async fn ensure_greatest_hits(
 /// Spawn a background task to ensure greatest hits exists.
 /// Returns immediately without blocking.
 pub fn ensure_greatest_hits_background(pool: Pool) {
-    if is_healthy() || REBUILD_IN_PROGRESS.load(Ordering::SeqCst) {
+    if REBUILD_IN_PROGRESS.load(Ordering::SeqCst) {
         return;
     }
 
