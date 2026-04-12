@@ -9,17 +9,17 @@
     { "id": 6, "capacity": 4 }
   ],
   "edges": [
-    { "from_node": 1, "to_node": 4, "probability": 0.2 },
-    { "from_node": 4, "to_node":  1, "probability": 0.2 },
-    { "from_node": 4, "to_node":  5, "probability": 0.2 },
-    { "from_node": 5, "to_node":  4, "probability": 0.2 },
-    { "from_node": 2, "to_node":  5, "probability": 0.2 },
-    { "from_node": 5, "to_node":  2, "probability": 0.2 },
-    { "from_node": 4, "to_node":  6, "probability": 0.05 },
-    { "from_node": 5, "to_node":  6, "probability": 0.05 },
-    { "from_node": 6, "to_node": 4, "probability": 0.1 },
-    { "from_node": 6, "to_node": 5, "probability": 0.1 },
-    { "from_node":  6, "to_node":  3, "probability": 0.2 },
-    { "from_node":  3, "to_node":  6, "probability": 0.2 }
+    { "from_node": 1, "to_node": 4, "probability": 0.02 },
+    { "from_node": 4, "to_node":  1, "probability": 0.02 },
+    { "from_node": 4, "to_node":  5, "probability": 0.02 },
+    { "from_node": 5, "to_node":  4, "probability": 0.02 },
+    { "from_node": 2, "to_node":  5, "probability": 0.02 },
+    { "from_node": 5, "to_node":  2, "probability": 0.02 },
+    { "from_node": 4, "to_node":  6, "probability": 0.005 },
+    { "from_node": 5, "to_node":  6, "probability": 0.005 },
+    { "from_node": 6, "to_node": 4, "probability": 0.01 },
+    { "from_node": 6, "to_node": 5, "probability": 0.01 },
+    { "from_node":  6, "to_node":  3, "probability": 0.02 },
+    { "from_node":  3, "to_node":  6, "probability": 0.02 }
   ]
 }
