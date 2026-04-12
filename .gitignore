@@ -35,5 +35,11 @@ music-evo-deploy.tar.gz
 **/acme-challenge/
 **/.cloudflared/
 **/backup_*.sql
+**/*.htpasswd
+**/admin.htpasswd
+
+# Local private notes/checklists (do not commit)
+notes/*.local.md
+notes/private/
 
 /target/
