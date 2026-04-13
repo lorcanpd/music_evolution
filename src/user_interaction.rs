@@ -55,8 +55,9 @@ use std::sync::Arc;
 use std::io;
 
 use tokio::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 // use music_evo::task_queue::TaskQueue;
+use crate::audio_files;
 use crate::genome::Genome;
 use crate::decode_genome::DecodedGenome;
 use crate::play_genes::{generate_wav, play_genes, play_precomputed_wav};
@@ -78,12 +79,101 @@ pub struct AppState {
     /// Wrapped in Arc to allow sharing with task queue worker for cache clearing
     pub audio_cache: Arc<RwLock<LruCache<i32, Arc<Vec<u8>>>>>,
     pub reproduction_in_progress: Arc<AtomicBool>,
+    pub current_generation: Arc<AtomicI32>,
     pub first_gen_created: Arc<AtomicBool>,
     pub task_queue: TaskQueue,
     pub song_queue_sender: SongQueue,
     pub song_queue_receiver: Arc<Mutex<Receiver<i32>>>,
     /// Production mode: reproduction is handled by external job runner
     pub production_mode: bool,
+}
+
+async fn current_generation_from_db(state: &State<AppState>) -> Result<i32, Redirect> {
+    let client = state.pool.get().await.map_err(|e| {
+        eprintln!("current_generation_from_db: Failed to get DB connection: {}", e);
+        Redirect::to("/")
+    })?;
+
+    client
+        .query_one("SELECT COALESCE(MAX(generation), 1) AS gen FROM songs", &[])
+        .await
+        .map(|row| row.get("gen"))
+        .map_err(|e| {
+            eprintln!("current_generation_from_db: Failed to query generation: {}", e);
+            Redirect::to("/")
+        })
+}
+
+async fn flush_runtime_generation_state(state: &State<AppState>, generation: i32) {
+    state.current_generation.store(generation, Ordering::SeqCst);
+
+    {
+        let mut cache = state.audio_cache.write().await;
+        cache.clear();
+    }
+
+    {
+        let mut rx = state.song_queue_receiver.lock().await;
+        while rx.try_recv().is_ok() {}
+    }
+}
+
+async fn get_random_song_for_current_generation(state: &State<AppState>) -> Result<i32, Redirect> {
+    let client = state.pool.get().await.map_err(|e| {
+        eprintln!("get_random_song_for_current_generation: Failed to get DB connection: {}", e);
+        Redirect::to("/")
+    })?;
+
+    client
+        .query_one(
+            "SELECT song_id FROM songs \
+             WHERE generation = (SELECT MAX(generation) FROM songs) \
+             ORDER BY RANDOM() LIMIT 1",
+            &[],
+        )
+        .await
+        .map(|row| row.get("song_id"))
+        .map_err(|e| {
+            eprintln!("get_random_song_for_current_generation: Failed to fetch replacement song: {}", e);
+            Redirect::to("/")
+        })
+}
+
+async fn ensure_song_id_matches_available_audio(
+    state: &State<AppState>,
+    song_id: i32,
+) -> Result<i32, Redirect> {
+    let wav_path = audio_files::serving_path().join(format!("{}.wav", song_id));
+    if wav_path.exists() {
+        return Ok(song_id);
+    }
+
+    eprintln!(
+        "get_rate_songs: queued song {} has no WAV at {}, attempting generation repair",
+        song_id,
+        wav_path.display()
+    );
+
+    let db_generation = current_generation_from_db(state).await?;
+    let cached_generation = state.current_generation.load(Ordering::SeqCst);
+
+    if db_generation != cached_generation || !wav_path.exists() {
+        flush_runtime_generation_state(state, db_generation).await;
+    }
+
+    let replacement_song = get_random_song_for_current_generation(state).await?;
+    let replacement_wav = audio_files::serving_path().join(format!("{}.wav", replacement_song));
+
+    if replacement_wav.exists() {
+        Ok(replacement_song)
+    } else {
+        eprintln!(
+            "get_rate_songs: replacement song {} also missing WAV at {}",
+            replacement_song,
+            replacement_wav.display()
+        );
+        Err(Redirect::to("/"))
+    }
 }
 
 
@@ -282,7 +372,7 @@ pub async fn get_rate_songs(
     }
 
     // Await a song ID from the pre‑fetched song queue with a timeout
-    let song_id = {
+    let queued_song_id = {
         let mut rx = state.song_queue_receiver.lock().await;
 
         // Wait up to 10 seconds for a song - this gives the queue time to populate
@@ -303,6 +393,8 @@ pub async fn get_rate_songs(
             }
         }
     };
+
+    let song_id = ensure_song_id_matches_available_audio(state, queued_song_id).await?;
 
     let csrf_token = generate_csrf_token();
     cookies.add(

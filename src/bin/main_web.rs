@@ -20,7 +20,7 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicI32};
 use tokio::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 
@@ -108,10 +108,32 @@ async fn rocket() -> _ {
         }
     };
 
+    let current_generation = {
+        match pool.get().await {
+            Ok(client) => {
+                match client.query_one(
+                    "SELECT COALESCE(MAX(generation), 1) AS gen FROM songs",
+                    &[]
+                ).await {
+                    Ok(row) => row.get("gen"),
+                    Err(e) => {
+                        println!("Could not check current generation (tables may not exist yet): {}", e);
+                        1
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Could not connect to DB to check current generation: {}", e);
+                1
+            }
+        }
+    };
+
     let app_state = AppState {
         pool: pool.clone(),
         audio_cache: audio_cache.clone(),
         reproduction_in_progress: Arc::new(AtomicBool::new(false)),
+        current_generation: Arc::new(AtomicI32::new(current_generation)),
         first_gen_created: Arc::new(AtomicBool::new(first_gen_exists)),
         task_queue: task_queue_sender, // Store the sender for enqueuing tasks.
         song_queue_sender: SongQueue {sender: song_queue_sender, count: Arc::new(AtomicUsize::new(0))}, // Store the sender for song queue.
