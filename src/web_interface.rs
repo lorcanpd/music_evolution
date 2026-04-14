@@ -594,25 +594,26 @@ pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<Binar
 
             let genome: Genome = row.get("genome");
             let decoded = DecodedGenome::decode(&genome);
-            match play_genes::generate_wav_data(&decoded) {
-                Ok(data) => {
-                    let arc_data = Arc::new(data.clone());
-                    let mut cache = state.audio_cache.write().await;
-                    cache.put(song_id, arc_data);
-
-                    // Best effort: repopulate the current-generation WAV path if it exists.
-                    if let Some(parent) = filename.parent() {
-                        let _ = fs::create_dir_all(parent).await;
-                        let _ = fs::write(&filename, &data).await;
-                    }
-
-                    Some(BinaryContent(data))
-                }
+            let data = match play_genes::generate_wav_data(&decoded) {
+                Ok(data) => data,
                 Err(gen_err) => {
                     eprintln!("Error regenerating WAV for song {} from DB: {}", song_id, gen_err);
-                    None
+                    return None;
                 }
+            };
+
+            let arc_data = Arc::new(data.clone());
+            let mut cache = state.audio_cache.write().await;
+            cache.put(song_id, arc_data);
+            drop(cache);
+
+            // Best effort: repopulate the current-generation WAV path if it exists.
+            if let Some(parent) = filename.parent() {
+                let _ = fs::create_dir_all(parent).await;
+                let _ = fs::write(&filename, &data).await;
             }
+
+            Some(BinaryContent(data))
         }
     }
 }
