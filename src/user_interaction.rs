@@ -116,6 +116,8 @@ async fn flush_runtime_generation_state(state: &State<AppState>, generation: i32
         let mut rx = state.song_queue_receiver.lock().await;
         while rx.try_recv().is_ok() {}
     }
+
+    state.song_queue_sender.count.store(0, Ordering::SeqCst);
 }
 
 async fn get_random_song_for_current_generation(state: &State<AppState>) -> Result<i32, Redirect> {

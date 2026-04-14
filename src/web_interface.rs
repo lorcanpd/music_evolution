@@ -16,6 +16,8 @@ use rocket::tokio::sync::broadcast::{self, Sender, error::RecvError};
 use rocket::response::stream::{Event, EventStream};
 use serde_json::json;
 use crate::genome::Genome;
+use crate::decode_genome::DecodedGenome;
+use crate::play_genes;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use std::sync::Arc;
@@ -567,7 +569,50 @@ pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<Binar
         },
         Err(e) => {
             eprintln!("Error loading {}: {}", filename.display(), e);
-            None
+            let client = match state.pool.get().await {
+                Ok(client) => client,
+                Err(db_err) => {
+                    eprintln!("Error getting DB client while regenerating song {}: {}", song_id, db_err);
+                    return None;
+                }
+            };
+
+            let row = match client
+                .query_opt("SELECT genome FROM songs WHERE song_id = $1", &[&song_id])
+                .await
+            {
+                Ok(Some(row)) => row,
+                Ok(None) => {
+                    eprintln!("No genome found in DB for missing song {}", song_id);
+                    return None;
+                }
+                Err(db_err) => {
+                    eprintln!("Error querying DB for missing song {}: {}", song_id, db_err);
+                    return None;
+                }
+            };
+
+            let genome: Genome = row.get("genome");
+            let decoded = DecodedGenome::decode(&genome);
+            match play_genes::generate_wav_data(&decoded) {
+                Ok(data) => {
+                    let arc_data = Arc::new(data.clone());
+                    let mut cache = state.audio_cache.write().await;
+                    cache.put(song_id, arc_data);
+
+                    // Best effort: repopulate the current-generation WAV path if it exists.
+                    if let Some(parent) = filename.parent() {
+                        let _ = fs::create_dir_all(parent).await;
+                        let _ = fs::write(&filename, &data).await;
+                    }
+
+                    Some(BinaryContent(data))
+                }
+                Err(gen_err) => {
+                    eprintln!("Error regenerating WAV for song {} from DB: {}", song_id, gen_err);
+                    None
+                }
+            }
         }
     }
 }
