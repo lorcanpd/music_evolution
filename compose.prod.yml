@@ -43,7 +43,7 @@ services:
       # Audio directory - in production, mount NFS path directly to audio/current
       # Workers write to NFS, app reads via this mount
       # Note: audio/generations is not used in production (Slurm writes directly)
-      - /srv/shared/music-evo/current_generation:/app/audio/current:ro
+      - /srv/shared/music-evo/current_generation:/app/audio/current
       # Data directory - greatest hits archive (written by the app rebuild logic)
       - /srv/shared/music-evo/data:/app/data
       # Access to shared NFS mount (for job status files)

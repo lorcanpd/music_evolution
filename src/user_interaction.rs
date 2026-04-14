@@ -57,7 +57,6 @@ use std::io;
 use tokio::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 // use music_evo::task_queue::TaskQueue;
-use crate::audio_files;
 use crate::genome::Genome;
 use crate::decode_genome::DecodedGenome;
 use crate::play_genes::{generate_wav, play_genes, play_precomputed_wav};
@@ -145,37 +144,48 @@ async fn ensure_song_id_matches_available_audio(
     state: &State<AppState>,
     song_id: i32,
 ) -> Result<i32, Redirect> {
-    let wav_path = audio_files::serving_path().join(format!("{}.wav", song_id));
-    if wav_path.exists() {
+    let client = state.pool.get().await.map_err(|e| {
+        eprintln!("ensure_song_id_matches_available_audio: Failed to get DB connection: {}", e);
+        Redirect::to("/")
+    })?;
+
+    let row = client
+        .query_one(
+            "SELECT
+                COALESCE(MAX(generation), 1) AS current_generation,
+                (SELECT generation FROM songs WHERE song_id = $1) AS song_generation
+             FROM songs",
+            &[&song_id],
+        )
+        .await
+        .map_err(|e| {
+            eprintln!(
+                "ensure_song_id_matches_available_audio: Failed to query generation state for song {}: {}",
+                song_id, e
+            );
+            Redirect::to("/")
+        })?;
+
+    let db_generation: i32 = row.get("current_generation");
+    let song_generation: Option<i32> = row.get("song_generation");
+    let cached_generation = state.current_generation.load(Ordering::SeqCst);
+
+    if song_generation == Some(db_generation) {
+        if cached_generation != db_generation {
+            flush_runtime_generation_state(state, db_generation).await;
+        }
         return Ok(song_id);
     }
 
     eprintln!(
-        "get_rate_songs: queued song {} has no WAV at {}, attempting generation repair",
+        "get_rate_songs: queued song {} belongs to generation {:?}, current generation is {}, attempting generation repair",
         song_id,
-        wav_path.display()
+        song_generation,
+        db_generation
     );
 
-    let db_generation = current_generation_from_db(state).await?;
-    let cached_generation = state.current_generation.load(Ordering::SeqCst);
-
-    if db_generation != cached_generation || !wav_path.exists() {
-        flush_runtime_generation_state(state, db_generation).await;
-    }
-
-    let replacement_song = get_random_song_for_current_generation(state).await?;
-    let replacement_wav = audio_files::serving_path().join(format!("{}.wav", replacement_song));
-
-    if replacement_wav.exists() {
-        Ok(replacement_song)
-    } else {
-        eprintln!(
-            "get_rate_songs: replacement song {} also missing WAV at {}",
-            replacement_song,
-            replacement_wav.display()
-        );
-        Err(Redirect::to("/"))
-    }
+    flush_runtime_generation_state(state, db_generation).await;
+    get_random_song_for_current_generation(state).await
 }
 
 

@@ -609,8 +609,19 @@ pub async fn get_song_wav(song_id: i32, state: &State<AppState>) -> Option<Binar
 
             // Best effort: repopulate the current-generation WAV path if it exists.
             if let Some(parent) = filename.parent() {
-                let _ = fs::create_dir_all(parent).await;
-                let _ = fs::write(&filename, &data).await;
+                if let Err(write_err) = fs::create_dir_all(parent).await {
+                    eprintln!(
+                        "Error creating parent directory for regenerated WAV {}: {}",
+                        filename.display(),
+                        write_err
+                    );
+                } else if let Err(write_err) = fs::write(&filename, &data).await {
+                    eprintln!(
+                        "Error writing regenerated WAV {}: {}",
+                        filename.display(),
+                        write_err
+                    );
+                }
             }
 
             Some(BinaryContent(data))
