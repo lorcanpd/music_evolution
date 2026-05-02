@@ -87,6 +87,33 @@ pub struct AppState {
     pub production_mode: bool,
 }
 
+async fn ensure_first_generation_created(state: &State<AppState>) -> Result<bool, Redirect> {
+    if state.first_gen_created.load(Ordering::SeqCst) {
+        return Ok(true);
+    }
+
+    let client = state.pool.get().await.map_err(|e| {
+        eprintln!("ensure_first_generation_created: Failed to get DB connection: {}", e);
+        Redirect::to("/")
+    })?;
+
+    let exists = client
+        .query_one("SELECT EXISTS(SELECT 1 FROM songs WHERE generation = 1) AS exists", &[])
+        .await
+        .map(|row| row.get::<_, bool>("exists"))
+        .map_err(|e| {
+            eprintln!("ensure_first_generation_created: Failed to query generation 1 existence: {}", e);
+            Redirect::to("/")
+        })?;
+
+    if exists {
+        state.first_gen_created.store(true, Ordering::SeqCst);
+        eprintln!("ensure_first_generation_created: repaired first_gen_created from DB");
+    }
+
+    Ok(exists)
+}
+
 async fn current_generation_from_db(state: &State<AppState>) -> Result<i32, Redirect> {
     let client = state.pool.get().await.map_err(|e| {
         eprintln!("current_generation_from_db: Failed to get DB connection: {}", e);
@@ -378,7 +405,7 @@ pub async fn get_rate_songs(
     }
 
     // Check if first generation exists - if not, redirect to home
-    if !state.first_gen_created.load(Ordering::SeqCst) {
+    if !ensure_first_generation_created(state).await? {
         eprintln!("get_rate_songs: first_gen_created is false, redirecting to home");
         return Err(Redirect::to("/"));
     }
