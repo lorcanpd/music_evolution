@@ -106,7 +106,7 @@
         <article class="card family-tree-placeholder">
           <div class="family-tree-placeholder-copy">
             <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-            <p>Pick an island spotlight to reveal its pedigree above the population.</p>
+            <p>Pick one of the three spotlight songs to reveal its pedigree above the population.</p>
           </div>
           <div class="family-tree-spotlight-row">${spotlightMarkup}</div>
         </article>
@@ -131,7 +131,6 @@
     const height = rowOrder.length * rowHeights;
     const yByGeneration = new Map(rowOrder.map((generation, index) => [generation, 88 + index * rowHeights]));
     const activeEdgeKeys = computeAncestorEdgeKeys(tree, state.selectedTreeSongId || tree.spotlight_song_id);
-    const layoutBySongId = buildTreeLayout(tree);
     const activePlayableSet = new Set(tree.nodes.map((node) => node.song_id));
 
     const rowLabels = rowOrder.map((generation, index) => {
@@ -142,7 +141,6 @@
     const nodeMarkup = tree.nodes.map((node) => {
       const color = islandColor(node.node);
       const y = yByGeneration.get(node.generation) || 0;
-      const layout = layoutBySongId.get(node.song_id) || { leftPct: 50, widthRem: 8.4, densityClass: "" };
       const isSpotlight = node.song_id === tree.spotlight_song_id;
       const isSelected = node.song_id === (state.selectedTreeSongId || tree.spotlight_song_id);
       const interactive = hasVisibleAncestorPath(tree, node.song_id) || isSpotlight;
@@ -152,7 +150,6 @@
         isSpotlight ? "is-spotlight" : "",
         isSelected ? "is-path-target" : "",
         interactive ? "is-interactive" : "",
-        layout.densityClass,
       ].filter(Boolean).join(" ");
 
       return `
@@ -161,7 +158,7 @@
           class="${buttonClass}"
           data-song-id="${node.song_id}"
           data-node-role="${node.role}"
-          style="left:${layout.leftPct}%; top:${y}px; --island-accent:${color}; --tree-node-width:${layout.widthRem}rem;"
+          style="left:${6 + node.x * 88}%; top:${y}px; --island-accent:${color};"
         >
           <span class="tree-node-label">Island ${node.node}</span>
           <span class="tree-node-id">#${node.song_id}</span>
@@ -272,7 +269,7 @@
           <div class="family-tree-header">
             <div>
               <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-              <p class="meta">Choose an island spotlight to open its family tree.</p>
+              <p class="meta">Choose a spotlight to open its family tree.</p>
             </div>
           </div>
           <div class="population-spotlights-only">${spotlightCards}</div>
@@ -536,32 +533,6 @@
 
   function hasVisibleAncestorPath(tree, songId) {
     return tree.edges.some((edge) => edge.child_song_id === songId);
-  }
-
-  function buildTreeLayout(tree) {
-    const layout = new Map();
-    const generations = [...new Set(tree.nodes.map((node) => node.generation))].sort((a, b) => a - b);
-
-    generations.forEach((generation) => {
-      const rowNodes = tree.nodes
-        .filter((node) => node.generation === generation)
-        .sort((a, b) => a.x - b.x || a.song_id - b.song_id);
-
-      if (rowNodes.length === 0) return;
-
-      const count = rowNodes.length;
-      const leftPad = count >= 10 ? 4 : count >= 8 ? 5 : count >= 6 ? 7 : 10;
-      const span = 100 - leftPad * 2;
-      const widthRem = count >= 10 ? 5.2 : count >= 8 ? 5.8 : count >= 6 ? 6.8 : 8.4;
-      const densityClass = count >= 10 ? 'is-dense' : count >= 8 ? 'is-compact' : '';
-
-      rowNodes.forEach((node, index) => {
-        const leftPct = count === 1 ? 50 : leftPad + (index / (count - 1)) * span;
-        layout.set(node.song_id, { leftPct, widthRem, densityClass });
-      });
-    });
-
-    return layout;
   }
 
   function renderSelectedEdges(tree, canvas, activeEdgeKeys) {

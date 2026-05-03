@@ -699,7 +699,7 @@ main.container {
 .tree-node {
     position: absolute;
     transform: translateX(-50%);
-    width: var(--tree-node-width, 8.4rem);
+    width: 8.4rem;
     padding: 0.55rem 0.6rem 0.65rem;
     border: 1px solid var(--color-border);
     background:
@@ -713,15 +713,6 @@ main.container {
 .tree-node.is-spotlight,
 .tree-node.is-path-target {
     border-color: var(--color-text);
-    z-index: 3;
-}
-
-.tree-node.is-compact {
-    padding: 0.48rem 0.5rem 0.56rem;
-}
-
-.tree-node.is-dense {
-    padding: 0.42rem 0.44rem 0.5rem;
 }
 
 .tree-node-label,
@@ -740,14 +731,6 @@ main.container {
     font-weight: 700;
 }
 
-.tree-node.is-compact .tree-node-id {
-    font-size: 0.8rem;
-}
-
-.tree-node.is-dense .tree-node-id {
-    font-size: 0.74rem;
-}
-
 .tree-node-actions {
     display: flex;
     justify-content: space-between;
@@ -760,20 +743,6 @@ main.container {
     font-size: 0.58rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-}
-
-.tree-node.is-compact .tree-node-label,
-.tree-node.is-compact .tree-node-role,
-.tree-node.is-compact .tree-node-similarity,
-.tree-node.is-compact .tree-node-play {
-    font-size: 0.54rem;
-}
-
-.tree-node.is-dense .tree-node-label,
-.tree-node.is-dense .tree-node-role,
-.tree-node.is-dense .tree-node-similarity,
-.tree-node.is-dense .tree-node-play {
-    font-size: 0.5rem;
 }
 
 .tree-node-play {
