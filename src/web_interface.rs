@@ -4,15 +4,13 @@ use rocket::{get, routes, Route, State};
 use rocket::response::Redirect;
 use rocket::response::{content::RawHtml};
 use rocket::fs::NamedFile;
-use deadpool_postgres::Pool;
-use crate::task_queue::{Task, TaskQueue};
+use crate::task_queue::Task;
 use crate::initialise_experiment::{create_generation_1, store_current_generation_wavs};
-use crate::reproduction::differential_reproduction;
 use crate::database::{create_database, populate_habitat_tables};
 use crate::audio_files;
-use crate::greatest_hits;
+use crate::family_trees;
 use crate::user_interaction::{get_choose_adam, post_choose_adam, get_rate_songs, post_rate_songs, AppState};
-use rocket::tokio::sync::broadcast::{self, Sender, error::RecvError};
+use rocket::tokio::sync::broadcast::{Sender, error::RecvError};
 use rocket::response::stream::{Event, EventStream};
 use serde_json::json;
 use crate::genome::Genome;
@@ -224,8 +222,8 @@ pub async fn index(state: &State<AppState>) -> RawHtml<String> {
                         a href="/rate_songs" role="button" class="btn btn-primary" {
                             "Rate Songs"
                         }
-                        a href="/greatest_hits" role="button" class="btn btn-secondary" {
-                            "Greatest Hits"
+                        a href="/family_trees" role="button" class="btn btn-secondary" {
+                            "Family Trees"
                         }
                     }
                 }
@@ -672,18 +670,37 @@ pub fn error_page() -> RawHtml<String> {
     RawHtml(base_layout("Error", content).into_string())
 }
 
-/// GET /greatest_hits - HTML page showing top rated songs
-/// Implements self-healing: if data is missing/corrupt, triggers a background rebuild.
 #[get("/greatest_hits")]
-pub async fn greatest_hits_page(state: &State<AppState>) -> RawHtml<String> {
-    // Check if a rebuild is in progress
-    if greatest_hits::is_rebuild_in_progress() {
+pub fn greatest_hits_redirect() -> Redirect {
+    Redirect::to("/family_trees")
+}
+
+#[get("/family_trees")]
+pub async fn family_trees_page(state: &State<AppState>) -> RawHtml<String> {
+    let latest_generation = family_trees::latest_generation(&state.pool).await.unwrap_or(0);
+    if latest_generation < 2 {
+        let content = html! {
+            article class="card family-tree-status" {
+                h2 { "Family Trees" }
+                p {
+                    "Family trees become available once a previous generation exists. "
+                    "Create at least two generations to unlock this page."
+                }
+                div class="btn-group" {
+                    a href="/" class="btn btn-secondary" { "Back to Home" }
+                }
+            }
+        };
+        return RawHtml(base_layout("Family Trees", content).into_string());
+    }
+
+    if family_trees::is_rebuild_in_progress() {
         let content = html! {
             article class="card" {
-                h2 { "Greatest Hits" }
+                h2 { "Family Trees" }
                 div class="spinner" {}
                 p style="text-align: center;" {
-                    "Greatest Hits is being rebuilt. This page will refresh automatically."
+                    "The previous-generation family tree package is being rebuilt."
                 }
                 div class="btn-group" {
                     a href="/" class="btn btn-secondary" { "Back to Home" }
@@ -693,39 +710,32 @@ pub async fn greatest_hits_page(state: &State<AppState>) -> RawHtml<String> {
                 (PreEscaped("setTimeout(() => window.location.reload(), 5000);"))
             }
         };
-        return RawHtml(base_layout("Greatest Hits - Rebuilding", content).into_string());
+        return RawHtml(base_layout("Family Trees - Rebuilding", content).into_string());
     }
 
-    // Check health/staleness and trigger rebuild if needed
-    let needs_rebuild = greatest_hits::needs_rebuild(&state.pool).await.unwrap_or(true);
-    if needs_rebuild {
-        // Trigger background rebuild
-        greatest_hits::ensure_greatest_hits_background(state.pool.clone());
-
-        // Show rebuilding message
-        let status = greatest_hits::load_status();
-        let status_msg = status
-            .map(|s| format!("Status: {} ({})",
-                s.status,
-                s.last_error.unwrap_or_else(|| "no error".to_string())
+    if family_trees::needs_rebuild(&state.pool).await.unwrap_or(true) {
+        family_trees::ensure_family_trees_background(state.pool.clone());
+        let status_msg = family_trees::load_status()
+            .map(|status| format!(
+                "Status: {}{}",
+                status.status,
+                status
+                    .last_error
+                    .map(|error| format!(" ({})", error))
+                    .unwrap_or_default()
             ))
             .unwrap_or_else(|| "Status: rebuilding...".to_string());
 
         let content = html! {
             article class="card" {
-                h2 { "Greatest Hits" }
+                h2 { "Family Trees" }
                 div class="spinner" {}
                 p style="text-align: center;" {
-                    "Greatest Hits data is missing, stale, or corrupted. A rebuild has been triggered."
+                    "The family-tree package is missing, stale, or incomplete. A rebuild has been triggered."
                 }
-                p class="meta" style="text-align: center;" {
-                    (status_msg)
-                }
-                p style="text-align: center;" {
-                    "This page will refresh automatically when the rebuild completes."
-                }
+                p class="meta" style="text-align: center;" { (status_msg) }
                 div class="btn-group" {
-                    a href="/greatest_hits" class="btn btn-primary" { "Retry" }
+                    a href="/family_trees" class="btn btn-primary" { "Retry" }
                     a href="/" class="btn btn-secondary" { "Back to Home" }
                 }
             }
@@ -733,136 +743,160 @@ pub async fn greatest_hits_page(state: &State<AppState>) -> RawHtml<String> {
                 (PreEscaped("setTimeout(() => window.location.reload(), 5000);"))
             }
         };
-        return RawHtml(base_layout("Greatest Hits - Rebuilding", content).into_string());
+        return RawHtml(base_layout("Family Trees - Rebuilding", content).into_string());
     }
 
-    // Data is healthy, display it
-    match greatest_hits::load_current_metadata() {
-        Ok(metadata) => {
-            let content = html! {
-                article class="card" {
-                    h2 { "Greatest Hits" }
-                    p {
-                        "The top " (metadata.songs.len()) " songs across all generations, "
-                        "ranked by listener approval."
-                    }
-                    p class="meta" {
-                        "Last updated: Generation " (metadata.trigger_generation)
-                    }
-
-                    div class="hits-list" {
-                        @for (rank, song) in metadata.songs.iter().enumerate() {
-                            div class="hit-entry" {
-                                div class="hit-rank" { "#" (rank + 1) }
-                                div class="hit-details" {
-                                    div class="hit-stats" {
-                                        span class="hit-score" {
-                                            (format!("{:.0}%", song.score * 100.0))
-                                        }
-                                        span class="hit-votes" {
-                                            (song.likes) " / " (song.likes + song.dislikes) " votes"
-                                        }
-                                    }
-                                    div class="hit-meta" {
-                                        "Gen " (song.generation) " | Song #" (song.song_id)
-                                    }
-                                }
-                                div class="hit-audio" {
-                                    audio controls preload="none" {
-                                        source src=(format!("/greatest_hits_wav/{}", song.song_id)) type="audio/wav";
-                                    }
-                                }
-                            }
-                        }
-                    }
+    let content = html! {
+        section class="family-tree-shell" {
+            article class="card family-tree-intro" {
+                h2 { "Family Trees" }
+                p {
+                    "Explore the previous generation, activate one of the three spotlight songs, "
+                    "and trace its family back through parents, grandparents, siblings, and cousins."
                 }
-
-                div style="text-align: center; margin-top: 2rem;" {
-                    a href="/" class="btn btn-secondary" { "Back to Home" }
+                p class="meta" {
+                    "Edges show direct parent-child relatedness. Hover a node to inspect its similarity to the active spotlight."
                 }
-            };
-            RawHtml(base_layout("Greatest Hits", content).into_string())
+            }
+            section id="family-tree-app" class="family-tree-app" {
+                div class="spinner" {}
+            }
         }
-        Err(e) => {
-            // Metadata load failed despite health check - trigger rebuild
-            greatest_hits::ensure_greatest_hits_background(state.pool.clone());
+        script src="/static/family_trees.js" {}
+    };
 
-            let content = html! {
-                article class="card" {
-                    h2 { "Greatest Hits" }
-                    div class="message message-error" {
-                        p { "Failed to load greatest hits data: " (e.to_string()) }
-                    }
-                    p { "A rebuild has been triggered. Please try again shortly." }
-                    div class="btn-group" {
-                        a href="/greatest_hits" class="btn btn-primary" { "Retry" }
-                        a href="/" class="btn btn-secondary" { "Back to Home" }
-                    }
-                }
-                script {
-                    (PreEscaped("setTimeout(() => window.location.reload(), 5000);"))
-                }
-            };
-            RawHtml(base_layout("Greatest Hits - Error", content).into_string())
-        }
-    }
+    RawHtml(base_layout("Family Trees", content).into_string())
 }
 
-/// GET /api/greatest_hits - JSON API endpoint
-/// Implements self-healing: if data is missing/corrupt, triggers a background rebuild.
-#[get("/api/greatest_hits")]
-pub async fn greatest_hits_api(state: &State<AppState>) -> rocket::response::content::RawJson<String> {
-    // Check if rebuild is in progress
-    if greatest_hits::is_rebuild_in_progress() {
+#[get("/api/family_trees")]
+pub async fn family_trees_api(state: &State<AppState>) -> rocket::response::content::RawJson<String> {
+    if family_trees::latest_generation(&state.pool).await.unwrap_or(0) < 2 {
         return rocket::response::content::RawJson(
-            r#"{"status": "rebuilding", "message": "Greatest hits is being rebuilt"}"#.to_string()
+            r#"{"status":"unavailable","message":"Family trees require at least two generations"}"#.to_string()
         );
     }
 
-    // Check health/staleness and trigger rebuild if needed
-    if greatest_hits::needs_rebuild(&state.pool).await.unwrap_or(true) {
-        greatest_hits::ensure_greatest_hits_background(state.pool.clone());
+    if family_trees::is_rebuild_in_progress() {
+        return rocket::response::content::RawJson(
+            r#"{"status":"rebuilding","message":"Family trees are being rebuilt"}"#.to_string()
+        );
+    }
 
-        let status = greatest_hits::load_status();
-        let status_json = match status {
-            Some(s) => serde_json::to_string(&s).unwrap_or_else(|_| "{}".to_string()),
-            None => r#"{"status": "rebuilding", "message": "Rebuild triggered"}"#.to_string(),
-        };
+    if family_trees::needs_rebuild(&state.pool).await.unwrap_or(true) {
+        family_trees::ensure_family_trees_background(state.pool.clone());
+        let status_json = family_trees::load_status()
+            .and_then(|status| serde_json::to_string(&status).ok())
+            .unwrap_or_else(|| r#"{"status":"rebuilding","message":"Rebuild triggered"}"#.to_string());
         return rocket::response::content::RawJson(status_json);
     }
 
-    match greatest_hits::load_current_metadata() {
-        Ok(metadata) => {
-            match serde_json::to_string(&metadata) {
-                Ok(json) => rocket::response::content::RawJson(json),
-                Err(e) => {
-                    // Trigger rebuild on serialization error
-                    greatest_hits::ensure_greatest_hits_background(state.pool.clone());
-                    rocket::response::content::RawJson(
-                        format!(r#"{{"error": "Failed to serialize: {}", "status": "rebuild_triggered"}}"#, e)
-                    )
-                }
-            }
-        }
-        Err(e) => {
-            // Trigger rebuild on load error
-            greatest_hits::ensure_greatest_hits_background(state.pool.clone());
+    match family_trees::load_current_metadata() {
+        Ok(metadata) => rocket::response::content::RawJson(
+            serde_json::to_string(&metadata)
+                .unwrap_or_else(|e| format!(r#"{{"status":"error","message":"{}"}}"#, e))
+        ),
+        Err(error) => {
+            family_trees::ensure_family_trees_background(state.pool.clone());
             rocket::response::content::RawJson(
-                format!(r#"{{"error": "Failed to load metadata: {}", "status": "rebuild_triggered"}}"#, e)
+                format!(r#"{{"status":"error","message":"{}"}}"#, error)
             )
         }
     }
 }
 
-/// GET /greatest_hits_wav/<song_id> - serve WAV files from greatest hits archive
-#[get("/greatest_hits_wav/<song_id>")]
-pub async fn get_greatest_hits_wav(song_id: i32) -> Option<BinaryContent> {
-    let filename = greatest_hits::wav_file_path(song_id);
+#[get("/api/family_trees/<spot_index>")]
+pub async fn family_tree_spot_api(
+    spot_index: usize,
+    state: &State<AppState>,
+) -> rocket::response::content::RawJson<String> {
+    if family_trees::latest_generation(&state.pool).await.unwrap_or(0) < 2 {
+        return rocket::response::content::RawJson(
+            r#"{"status":"unavailable","message":"Family trees require at least two generations"}"#.to_string()
+        );
+    }
+
+    if family_trees::needs_rebuild(&state.pool).await.unwrap_or(true) {
+        family_trees::ensure_family_trees_background(state.pool.clone());
+        return rocket::response::content::RawJson(
+            r#"{"status":"rebuilding","message":"Family trees are being rebuilt"}"#.to_string()
+        );
+    }
+
+    match family_trees::load_spotlight_tree(spot_index) {
+        Ok(tree) => rocket::response::content::RawJson(
+            serde_json::to_string(&tree)
+                .unwrap_or_else(|e| format!(r#"{{"status":"error","message":"{}"}}"#, e))
+        ),
+        Err(error) => rocket::response::content::RawJson(
+            format!(r#"{{"status":"error","message":"{}"}}"#, error)
+        ),
+    }
+}
+
+#[get("/family_tree_wav/<song_id>")]
+pub async fn get_family_tree_wav(song_id: i32, state: &State<AppState>) -> Option<BinaryContent> {
+    {
+        let mut cache = state.audio_cache.write().await;
+        if let Some(audio) = cache.get(&song_id) {
+            return Some(BinaryContent((**audio).clone()));
+        }
+    }
+
+    let filename = family_trees::wav_file_path(song_id);
     match fs::read(&filename).await {
-        Ok(data) => Some(BinaryContent(data)),
-        Err(e) => {
-            eprintln!("Error loading greatest hit wav {}: {}", filename.display(), e);
-            None
+        Ok(data) => {
+            let arc_data = Arc::new(data.clone());
+            let mut cache = state.audio_cache.write().await;
+            cache.put(song_id, arc_data);
+            Some(BinaryContent(data))
+        }
+        Err(error) => {
+            eprintln!("Error loading family tree wav {}: {}", filename.display(), error);
+
+            let client = match state.pool.get().await {
+                Ok(client) => client,
+                Err(db_error) => {
+                    eprintln!("Error getting DB client for family tree wav {}: {}", song_id, db_error);
+                    return None;
+                }
+            };
+
+            let row = match client
+                .query_opt("SELECT genome FROM songs WHERE song_id = $1", &[&song_id])
+                .await
+            {
+                Ok(Some(row)) => row,
+                Ok(None) => return None,
+                Err(db_error) => {
+                    eprintln!("Error querying DB for family tree wav {}: {}", song_id, db_error);
+                    return None;
+                }
+            };
+
+            let genome: Genome = row.get("genome");
+            let decoded = DecodedGenome::decode(&genome);
+            let data = match play_genes::generate_wav_data(&decoded) {
+                Ok(data) => data,
+                Err(gen_error) => {
+                    eprintln!("Error regenerating family tree wav {}: {}", song_id, gen_error);
+                    return None;
+                }
+            };
+
+            let arc_data = Arc::new(data.clone());
+            let mut cache = state.audio_cache.write().await;
+            cache.put(song_id, arc_data);
+            drop(cache);
+
+            if let Some(parent) = filename.parent() {
+                if let Err(dir_error) = fs::create_dir_all(parent).await {
+                    eprintln!("Error creating family tree audio dir {}: {}", parent.display(), dir_error);
+                } else if let Err(write_error) = fs::write(&filename, &data).await {
+                    eprintln!("Error writing family tree wav {}: {}", filename.display(), write_error);
+                }
+            }
+
+            Some(BinaryContent(data))
         }
     }
 }
@@ -887,8 +921,10 @@ pub fn routes() -> Vec<Route> {
         ws,
         reproduction_message,
         reproduction_status,
-        greatest_hits_page,
-        greatest_hits_api,
-        get_greatest_hits_wav
+        greatest_hits_redirect,
+        family_trees_page,
+        family_trees_api,
+        family_tree_spot_api,
+        get_family_tree_wav
     ]
 }

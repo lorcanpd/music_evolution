@@ -1,7 +1,6 @@
 // src/bin/main_web.rs
 
 #[macro_use] extern crate rocket;
-#[macro_use] extern crate lazy_static;
 extern crate rand;
 extern crate maud;
 extern crate tokio_postgres;
@@ -12,10 +11,11 @@ use rocket::tokio::sync::broadcast;
 use deadpool_postgres::{Config as DpPgConfig, Pool, Runtime};
 use tokio_postgres::{NoTls, Config as PgClientConfig};
 use music_evo::web_interface;
+use music_evo::database::create_database;
 use music_evo::user_interaction::{AppState, AUDIO_CACHE_MAX_ENTRIES};
 use music_evo::task_queue::{TaskQueue, run_task_queue, run_threshold_checker};
 use music_evo::song_queue::{SongQueue, run_song_queue};
-use music_evo::greatest_hits;
+use music_evo::family_trees;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use tokio::sync::RwLock;
@@ -48,6 +48,10 @@ async fn rocket() -> _ {
     let pool: Pool = pg_cfg
         .create_pool(Some(Runtime::Tokio1), NoTls)
         .expect("Error creating pool");
+
+    if let Err(error) = create_database(&pool).await {
+        eprintln!("Warning: failed to ensure database schema on startup: {}", error);
+    }
 
     // Create a broadcast channel for notifications.
     let (notify_tx, _) = broadcast::channel::<()>(10);
@@ -141,9 +145,6 @@ async fn rocket() -> _ {
         production_mode,
     };
 
-    // Store production_mode for use in fairing closures
-    let is_production = production_mode;
-
     // Build Rocket and attach an on-liftoff fairing to spawn the task queue worker.
     rocket::build()
         .manage(app_state)
@@ -204,25 +205,25 @@ async fn rocket() -> _ {
                 });
             })
         }))
-        // Check greatest hits health on startup and trigger rebuild if needed.
+        // Check family trees health on startup and trigger rebuild if needed.
         // This runs in the background and does not block startup.
-        .attach(AdHoc::on_liftoff("Greatest Hits Health Check", move |rocket| {
+        .attach(AdHoc::on_liftoff("Family Trees Health Check", move |rocket| {
             let pool = rocket.state::<AppState>().unwrap().pool.clone();
             let first_gen_created = rocket.state::<AppState>().unwrap().first_gen_created.clone();
 
             Box::pin(async move {
                 // Only check if first generation exists (experiment is running)
                 if first_gen_created.load(std::sync::atomic::Ordering::SeqCst) {
-                    let needs_rebuild = greatest_hits::needs_rebuild(&pool).await.unwrap_or(true);
-                    println!("Greatest Hits health check: {}", if needs_rebuild { "needs rebuild" } else { "healthy" });
+                    let needs_rebuild = family_trees::needs_rebuild(&pool).await.unwrap_or(true);
+                    println!("Family Trees health check: {}", if needs_rebuild { "needs rebuild" } else { "healthy" });
 
                     if needs_rebuild {
                         // Trigger background rebuild - does not block startup
-                        greatest_hits::ensure_greatest_hits_background(pool);
-                        println!("Greatest Hits: Background rebuild triggered");
+                        family_trees::ensure_family_trees_background(pool);
+                        println!("Family Trees: Background rebuild triggered");
                     }
                 } else {
-                    println!("Greatest Hits: Skipping health check (first generation not created yet)");
+                    println!("Family Trees: Skipping health check (first generation not created yet)");
                 }
             })
         }))

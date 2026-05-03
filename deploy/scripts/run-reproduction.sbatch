@@ -11,6 +11,8 @@
 # =============================================================================
 # This script runs on a Slurm worker node.
 # It executes the reproduce binary to create the next generation.
+# After reproduction succeeds, it finalizes the family-tree package for the
+# completed previous generation.
 #
 # Environment variables (passed from jobrunner):
 #   DATABASE_URL    - PostgreSQL connection string
@@ -27,6 +29,7 @@ STATUS_FILE="${SHARED_DIR}/jobs/music-evo/current_status.json"
 APPTAINER_BIN="${APPTAINER_BIN:-/srv/shared/apptainer/bin/apptainer}"
 SIF_IMAGE="${SHARED_DIR}/images/music-evo.sif"
 NATIVE_BINARY="${SHARED_DIR}/music-evo/bin/reproduce"
+NATIVE_FINALIZE_BINARY="${SHARED_DIR}/music-evo/bin/finalize_generation"
 
 echo "=============================================="
 echo "Music Evolution Reproduction Job"
@@ -105,14 +108,46 @@ run_reproduce() {
     return 1
 }
 
+run_finalize_generation() {
+    local args=(--previous-gen "$CURRENT_GEN")
+
+    if [[ -x "$APPTAINER_BIN" ]] && [[ -f "$SIF_IMAGE" ]]; then
+        echo "Finalizing family trees with Apptainer: $SIF_IMAGE"
+        "$APPTAINER_BIN" exec \
+            --bind "$SHARED_DIR:$SHARED_DIR" \
+            "$SIF_IMAGE" \
+            /app/finalize_generation "${args[@]}"
+        return $?
+    fi
+
+    if [[ -x "$NATIVE_FINALIZE_BINARY" ]]; then
+        echo "Finalizing family trees with native binary: $NATIVE_FINALIZE_BINARY"
+        "$NATIVE_FINALIZE_BINARY" "${args[@]}"
+        return $?
+    fi
+
+    echo "WARNING: No finalize_generation execution method available" >&2
+    echo "  - Apptainer: $APPTAINER_BIN (exists: $(test -x "$APPTAINER_BIN" && echo yes || echo no))"
+    echo "  - SIF Image: $SIF_IMAGE (exists: $(test -f "$SIF_IMAGE" && echo yes || echo no))"
+    echo "  - Native:    $NATIVE_FINALIZE_BINARY (exists: $(test -x "$NATIVE_FINALIZE_BINARY" && echo yes || echo no))"
+    return 1
+}
+
 # Execute reproduction
 if run_reproduce; then
+    if run_finalize_generation; then
+        FAMILY_TREES_MESSAGE="Family tree package finalized successfully"
+    else
+        FAMILY_TREES_MESSAGE="Family tree finalization failed; request-path rebuild remains available"
+        echo "WARNING: $FAMILY_TREES_MESSAGE" >&2
+    fi
+
     echo "=============================================="
     echo "Reproduction completed successfully"
     echo "Finished:          $(date -Iseconds)"
     echo "=============================================="
 
-    update_status "completed" "Generation ${NEXT_GEN} created successfully"
+    update_status "completed" "Generation ${NEXT_GEN} created successfully. ${FAMILY_TREES_MESSAGE}"
     exit 0
 else
     EXIT_CODE=$?

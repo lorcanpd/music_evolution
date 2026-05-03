@@ -1,9 +1,7 @@
 // src/database.rs
 
 use deadpool_postgres::Pool;
-use tokio_postgres::NoTls;
 use std::error::Error;
-use dotenv::dotenv;
 use serde_json;
 use std::fs::File;
 use std::io::BufReader;
@@ -67,6 +65,18 @@ pub async fn create_database(pool: &Pool) -> Result<(), Box<dyn Error>> {
         CREATE TABLE IF NOT EXISTS historic_fitness_scores (
             song_id INT NOT NULL REFERENCES songs(song_id),
             sum_of_ratings INT NOT NULL
+        );
+    ").await?;
+
+    // Store finalized support values for previous generations so the
+    // family-tree package can be rebuilt without preserving full archives.
+    client.batch_execute("
+        CREATE TABLE IF NOT EXISTS previous_generation_fitness (
+            generation INT NOT NULL,
+            song_id INT NOT NULL REFERENCES songs(song_id),
+            node INT NOT NULL REFERENCES habitat(node),
+            sum_of_ratings INT NOT NULL,
+            PRIMARY KEY (generation, song_id)
         );
     ").await?;
 

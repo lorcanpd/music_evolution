@@ -25,6 +25,7 @@ RUN mkdir -p src/bin && \
     echo 'fn main() { println!("dummy"); }' > src/bin/init_experiment.rs && \
     echo 'fn main() { println!("dummy"); }' > src/bin/scrub_db.rs && \
     echo 'fn main() { println!("dummy"); }' > src/bin/reproduce.rs && \
+    echo 'fn main() { println!("dummy"); }' > src/bin/finalize_generation.rs && \
     echo 'pub fn dummy() {}' > src/lib.rs
 
 # Build dependencies only (this layer will be cached)
@@ -32,13 +33,13 @@ RUN cargo build --release --bin web_server && \
     rm -rf src && \
     rm -rf target/release/deps/music_evo* && \
     rm -rf target/release/.fingerprint/music_evo* && \
-    rm -rf target/release/web_server* target/release/init_experiment* target/release/scrub_db* target/release/reproduce*
+    rm -rf target/release/web_server* target/release/init_experiment* target/release/scrub_db* target/release/reproduce* target/release/finalize_generation*
 
 # Copy actual source code
 COPY src ./src
 
 # Build the actual application
-RUN cargo build --release --bin web_server --bin init_experiment --bin scrub_db --bin reproduce
+RUN cargo build --release --bin web_server --bin init_experiment --bin scrub_db --bin reproduce --bin finalize_generation
 
 # =============================================================================
 # Stage 2: Runtime
@@ -63,13 +64,14 @@ COPY --from=builder /app/target/release/web_server /app/
 COPY --from=builder /app/target/release/init_experiment /app/
 COPY --from=builder /app/target/release/scrub_db /app/
 COPY --from=builder /app/target/release/reproduce /app/
+COPY --from=builder /app/target/release/finalize_generation /app/
 
 # Copy static assets and configuration
 COPY habitat_config.json /app/
 COPY static/ /app/static/
 
 # Create directories for audio files (generations + symlink structure) and data
-RUN mkdir -p /app/audio/generations /app/data/greatest_hits/revisions && chown -R appuser:appuser /app
+RUN mkdir -p /app/audio/generations /app/data/family_trees/slots && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser

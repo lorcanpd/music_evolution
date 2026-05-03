@@ -569,6 +569,262 @@ a:hover {
     }
 }
 
+/* Family Trees */
+.family-tree-shell,
+.family-tree-stage,
+.family-tree-app {
+    display: block;
+}
+
+.family-tree-intro {
+    margin-bottom: var(--space-lg);
+}
+
+.family-tree-status,
+.family-tree-placeholder,
+.family-tree-card,
+.family-tree-population-card {
+    position: relative;
+    overflow: hidden;
+}
+
+.family-tree-header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-lg);
+    align-items: flex-start;
+    margin-bottom: var(--space-lg);
+}
+
+.family-tree-header-actions {
+    flex-shrink: 0;
+}
+
+.family-tree-panel {
+    margin-bottom: var(--space-lg);
+}
+
+.family-tree-canvas {
+    position: relative;
+    overflow: hidden;
+    padding: var(--space-md) 0;
+    border-top: 1px solid var(--color-border);
+}
+
+.family-tree-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.tree-edge {
+    stroke: var(--color-accent);
+    transition: opacity 0.18s ease, stroke-width 0.18s ease;
+}
+
+.tree-edge-active {
+    stroke: var(--color-accent);
+}
+
+.family-tree-row-label {
+    position: absolute;
+    left: 0;
+    font-size: 0.7rem;
+    color: var(--color-text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+}
+
+.tree-node {
+    position: absolute;
+    transform: translateX(-50%);
+    width: 11rem;
+    padding: 0.85rem 0.9rem 1rem;
+    border: 1px solid var(--color-border);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0) 45%, color-mix(in srgb, var(--island-accent) 28%, transparent) 100%),
+        var(--color-surface);
+    color: var(--color-text);
+    text-align: left;
+    transition: border-color 0.18s ease, transform 0.18s ease;
+}
+
+.tree-node:hover,
+.tree-node.is-path-target,
+.tree-node.is-spotlight {
+    border-color: var(--color-text);
+}
+
+.tree-node.is-interactive:hover {
+    transform: translateX(-50%) translateY(-2px);
+}
+
+.tree-node-label,
+.tree-node-role {
+    display: block;
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--color-text-dim);
+}
+
+.tree-node-id {
+    display: block;
+    margin: 0.3rem 0;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.tree-node-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+
+.tree-node-similarity,
+.tree-node-play {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.tree-node-play {
+    border-bottom: 1px solid var(--color-text);
+}
+
+.population-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
+.population-card {
+    position: relative;
+    border: 1px solid var(--color-border);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0) 55%, color-mix(in srgb, var(--island-accent) 30%, transparent) 100%),
+        var(--color-surface);
+    padding: var(--space-lg);
+    min-height: 15rem;
+}
+
+.population-card.is-playable:hover {
+    border-color: var(--color-text);
+}
+
+.population-card.is-active {
+    border-color: var(--color-text);
+}
+
+.population-card.is-inert {
+    opacity: 0.52;
+}
+
+.population-card-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    align-items: center;
+    margin-bottom: var(--space-md);
+}
+
+.population-card h3 {
+    margin: 0 0 var(--space-sm);
+    font-size: 1.45rem;
+}
+
+.population-card p {
+    min-height: 3rem;
+    margin-bottom: var(--space-lg);
+}
+
+.population-card-island,
+.population-card-badge {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.population-card-badge {
+    color: var(--color-text);
+}
+
+.population-card-actions {
+    display: flex;
+    gap: var(--space-sm);
+    margin-top: auto;
+}
+
+.population-card-actions .btn {
+    flex: 1 1 0;
+    padding-inline: var(--space-md);
+}
+
+.family-tree-tooltip {
+    position: absolute;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    background: rgba(0, 0, 0, 0.94);
+    border: 1px solid var(--color-text);
+    pointer-events: none;
+}
+
+.family-tree-tooltip-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.family-tree-tooltip-ring {
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 50% !important;
+    background:
+        radial-gradient(circle closest-side, var(--color-bg) 58%, transparent 60% 100%),
+        conic-gradient(var(--color-text) 0 calc(var(--ring-fill) * 1%), rgba(255,255,255,0.12) 0 100%);
+    border: 1px solid var(--color-border);
+}
+
+@media (max-width: 980px) {
+    .population-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tree-node {
+        width: 9rem;
+        padding: 0.75rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .family-tree-header {
+        flex-direction: column;
+    }
+
+    .population-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .family-tree-canvas {
+        overflow-x: auto;
+        min-height: 32rem;
+    }
+
+    .tree-node {
+        width: 8.2rem;
+    }
+}
+
 /* Override any remaining Pico rounded corners */
 [data-theme="dark"],
 input, select, textarea, button,

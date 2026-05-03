@@ -14,6 +14,7 @@ use std::process::ExitCode;
 use deadpool_postgres::{Config as DpPgConfig, Pool, Runtime};
 use tokio_postgres::{Config as PgClientConfig, NoTls};
 
+use music_evo::database::create_database;
 use music_evo::reproduction::run_reproduction;
 
 #[derive(Debug)]
@@ -144,6 +145,11 @@ async fn main() -> ExitCode {
             eprintln!("Error: Failed to connect to database: {}", e);
             return ExitCode::from(1);
         }
+    }
+
+    if let Err(error) = create_database(&pool).await {
+        eprintln!("Error: Failed to ensure database schema: {}", error);
+        return ExitCode::from(1);
     }
 
     // Run reproduction

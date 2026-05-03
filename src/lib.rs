@@ -12,3 +12,6 @@ pub mod task_queue;
 pub mod song_queue;
 pub mod audio_files;
 pub mod greatest_hits;
+pub mod family_tree_types;
+pub mod family_trees;
+pub mod relatedness;

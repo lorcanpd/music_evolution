@@ -40,3 +40,7 @@ path = "src/bin/scrub_db.rs"
 [[bin]]
 name = "reproduce"
 path = "src/bin/reproduce.rs"
+
+[[bin]]
+name = "finalize_generation"
+path = "src/bin/finalize_generation.rs"

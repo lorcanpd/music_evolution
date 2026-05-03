@@ -11,6 +11,47 @@ use crate::decode_genome::DecodedGenome;
 use crate::play_genes;
 use crate::audio_files;
 
+async fn archive_previous_generation_fitness(
+    client: &deadpool_postgres::Client,
+    current_generation: i32,
+) -> Result<(), Box<dyn Error>> {
+    client.execute(
+        "DELETE FROM previous_generation_fitness WHERE generation <> $1",
+        &[&current_generation],
+    ).await?;
+
+    let rows = client.query(
+        "
+        SELECT s.song_id, s.node, COALESCE(SUM(f.rating) + 1, 1) as sum_of_ratings
+        FROM songs s
+        LEFT JOIN current_generation_fitness f ON s.song_id = f.song_id
+        WHERE s.generation = $1
+        GROUP BY s.song_id, s.node
+        ",
+        &[&current_generation],
+    ).await?;
+
+    for row in rows {
+        let song_id: i32 = row.get("song_id");
+        let node: i32 = row.get("node");
+        let sum_of_ratings: i64 = row.get::<_, Option<i64>>("sum_of_ratings").unwrap_or(1);
+
+        client.execute(
+            "
+            INSERT INTO previous_generation_fitness (generation, song_id, node, sum_of_ratings)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (generation, song_id)
+            DO UPDATE SET
+                node = EXCLUDED.node,
+                sum_of_ratings = EXCLUDED.sum_of_ratings
+            ",
+            &[&current_generation, &song_id, &node, &(sum_of_ratings as i32)],
+        ).await?;
+    }
+
+    Ok(())
+}
+
 /// Run reproduction with explicit WAV output directory.
 /// Returns the number of songs created.
 /// Used by the reproduce CLI binary for Slurm jobs.
@@ -62,7 +103,11 @@ async fn differential_reproduction_impl(
         ",
         &[&current_generation]).await?;
 
-    // Add each songs fitness score to the historic_fitness_scores table
+    // Persist finalized support values for rebuilds before the current generation
+    // ratings are cleared.
+    archive_previous_generation_fitness(&client, current_generation).await?;
+
+    // Add each song's fitness score to the historic_fitness_scores table
     for row in rows.iter() {
         let song_id: i32 = row.get("song_id");
         let total_rating: i64 = row.get::<_, Option<i64>>("total_rating").unwrap_or(0);

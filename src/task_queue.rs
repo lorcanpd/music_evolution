@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 use lru::LruCache;
 use crate::reproduction::differential_reproduction;
-use crate::greatest_hits;
+use crate::family_trees;
 
 /// A guard that ensures reproduction_in_progress is reset when dropped.
 /// This implements the RAII pattern to guarantee cleanup even on panic/error.
@@ -114,13 +114,12 @@ async fn process_reproduction(
     // Run differential reproduction - this is the core operation
     differential_reproduction(current_generation, next_generation, pool).await?;
 
-    // Update greatest hits with the completed generation
-    // Use the safe wrapper that catches panics and logs errors
-    // Greatest hits failure should NEVER block reproduction completion
-    if let Err(e) = greatest_hits::update_greatest_hits_safe(pool, next_generation).await {
-        eprintln!("Warning: Failed to update greatest hits: {}", e);
-        eprintln!("Warning: Reproduction will continue despite greatest hits failure");
-        // Don't fail the whole reproduction for greatest hits error
+    // Build the previous-generation family-tree package.
+    // This is best-effort in development mode and should not block the
+    // reproduction lifecycle if the package rebuild fails.
+    if let Err(e) = family_trees::update_family_trees_safe(pool, current_generation).await {
+        eprintln!("Warning: Failed to update family trees: {}", e);
+        eprintln!("Warning: Reproduction will continue despite family tree failure");
     }
 
     // Clear the audio cache - the old generation's files are no longer valid
