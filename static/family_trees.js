@@ -92,12 +92,29 @@
     }
 
     if (!state.activeTree || state.activeSpotIndex === null) {
+      const spotlightMarkup = state.metadata.spotlights.map((spotlight) => `
+        <button type="button" class="family-tree-spotlight-chip" data-activate-placeholder="${spotlight.index}" style="--island-accent:${islandColor(spotlight.node)}">
+          <span>Spotlight ${spotlight.index + 1}</span>
+          <strong>#${spotlight.song_id}</strong>
+          <em>Island ${spotlight.node}</em>
+        </button>
+      `).join("");
+
       panel.innerHTML = `
         <article class="card family-tree-placeholder">
-          <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-          <p>Activate one of the three spotlight songs below to reveal its family tree.</p>
+          <div class="family-tree-placeholder-copy">
+            <h2>Previous Generation #${state.metadata.previous_generation}</h2>
+            <p>Pick one of the three spotlight songs to reveal a compact pedigree view above the population.</p>
+          </div>
+          <div class="family-tree-spotlight-row">${spotlightMarkup}</div>
         </article>
       `;
+
+      panel.querySelectorAll("[data-activate-placeholder]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          await toggleSpotlight(Number(button.dataset.activatePlaceholder));
+        });
+      });
       return;
     }
 
@@ -253,15 +270,21 @@
         .map((node) => node.song_id)
     );
 
-    const cards = state.metadata.population.map((song) => {
+    const grouped = new Map();
+    state.metadata.population.forEach((song) => {
+      if (!grouped.has(song.node)) grouped.set(song.node, []);
+      grouped.get(song.node).push(song);
+    });
+
+    const groupsMarkup = [...grouped.entries()].map(([node, songs]) => {
+      const cards = songs.map((song) => {
       const spotlightSummary = state.metadata.spotlights.find((spot) => spot.song_id === song.song_id);
       const isActiveSpotlight = spotlightSummary && spotlightSummary.index === state.activeSpotIndex;
       const isRelative = !spotlightSummary && activeRelativeIds.has(song.song_id);
       const playable = Boolean(spotlightSummary) || isRelative;
       const buttonLabel = spotlightSummary
         ? (isActiveSpotlight ? "Hide Tree" : "Show Tree")
-        : (isRelative ? "Play Relative" : "Locked");
-      const playLabel = playable ? "Play" : "Locked";
+        : "Relative";
       const cardClasses = [
         "population-card",
         spotlightSummary ? "is-spotlight" : "",
@@ -277,12 +300,36 @@
             ${spotlightSummary ? `<span class="population-card-badge">Spotlight ${spotlightSummary.index + 1}</span>` : ""}
           </div>
           <h3>#${song.song_id}</h3>
-          <p>${spotlightSummary ? "Always playable" : (isRelative ? "Playable while spotlight is active" : "Inactive until related spotlight is active")}</p>
-          <div class="population-card-actions">
-            <button type="button" class="btn btn-secondary" data-play-song="${song.song_id}" ${playable ? "" : "disabled"}>${playLabel}</button>
-            <button type="button" class="btn ${spotlightSummary ? "btn-primary" : "btn-secondary"}" data-activate-spot="${spotlightSummary ? spotlightSummary.index : ""}" ${spotlightSummary ? "" : "disabled"}>${buttonLabel}</button>
-          </div>
+          <p>${spotlightSummary ? "Always playable" : (isRelative ? "Playable for this spotlight" : "Locked until a related spotlight is active")}</p>
+          ${spotlightSummary ? `
+            <div class="population-card-actions">
+              <button type="button" class="btn btn-secondary" data-play-song="${song.song_id}">Play</button>
+              <button type="button" class="btn btn-primary" data-activate-spot="${spotlightSummary.index}">${buttonLabel}</button>
+            </div>
+          ` : isRelative ? `
+            <div class="population-card-actions">
+              <button type="button" class="btn btn-secondary" data-play-song="${song.song_id}">Play</button>
+              <span class="population-card-status">Relative</span>
+            </div>
+          ` : `
+            <div class="population-card-actions">
+              <span class="population-card-status is-muted">Locked</span>
+            </div>
+          `}
         </article>
+      `;
+      }).join("");
+
+      return `
+        <section class="population-island-group" style="--island-accent:${islandColor(node)}">
+          <div class="population-island-header">
+            <div>
+              <h3>Island ${node}</h3>
+              <p>${songs.length} songs</p>
+            </div>
+          </div>
+          <div class="population-island-grid">${cards}</div>
+        </section>
       `;
     }).join("");
 
@@ -291,10 +338,10 @@
         <div class="family-tree-header">
           <div>
             <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-            <p class="meta">Population sorted by island. Spotlight songs are always playable.</p>
+            <p class="meta">Population grouped by island. Spotlight songs are always playable.</p>
           </div>
         </div>
-        <div class="population-grid">${cards}</div>
+        <div class="population-groups">${groupsMarkup}</div>
       </article>
     `;
 

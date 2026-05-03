@@ -71,6 +71,11 @@ main.container {
     padding: var(--space-lg);
 }
 
+main.container.page-family-trees {
+    max-width: 1360px;
+    padding: var(--space-xl) var(--space-xl) var(--space-xxl);
+}
+
 /* Header */
 header {
     text-align: center;
@@ -580,6 +585,11 @@ a:hover {
     margin-bottom: var(--space-lg);
 }
 
+.family-tree-intro-actions {
+    justify-content: flex-start;
+    margin-top: var(--space-lg);
+}
+
 .family-tree-status,
 .family-tree-placeholder,
 .family-tree-card,
@@ -702,14 +712,56 @@ a:hover {
     gap: var(--space-md);
 }
 
+.population-groups {
+    display: grid;
+    gap: var(--space-lg);
+}
+
+.population-island-group {
+    border: 1px solid var(--color-border);
+    padding: var(--space-md);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0) 72%, color-mix(in srgb, var(--island-accent) 22%, transparent) 100%),
+        var(--color-surface);
+}
+
+.population-island-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+.population-island-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.population-island-header p {
+    margin: 0;
+    font-size: 0.7rem;
+    color: var(--color-text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.population-island-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--space-md);
+}
+
 .population-card {
     position: relative;
     border: 1px solid var(--color-border);
     background:
         linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0) 55%, color-mix(in srgb, var(--island-accent) 30%, transparent) 100%),
         var(--color-surface);
-    padding: var(--space-lg);
-    min-height: 15rem;
+    padding: var(--space-md);
+    min-height: 0;
 }
 
 .population-card.is-playable:hover {
@@ -733,13 +785,14 @@ a:hover {
 }
 
 .population-card h3 {
-    margin: 0 0 var(--space-sm);
-    font-size: 1.45rem;
+    margin: 0 0 0.35rem;
+    font-size: 1.1rem;
 }
 
 .population-card p {
-    min-height: 3rem;
-    margin-bottom: var(--space-lg);
+    min-height: 0;
+    margin-bottom: var(--space-md);
+    font-size: 0.85rem;
 }
 
 .population-card-island,
@@ -757,11 +810,79 @@ a:hover {
     display: flex;
     gap: var(--space-sm);
     margin-top: auto;
+    align-items: center;
 }
 
 .population-card-actions .btn {
-    flex: 1 1 0;
-    padding-inline: var(--space-md);
+    flex: 0 1 auto;
+    padding: 0.75rem 0.95rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+}
+
+.population-card-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.6rem;
+    padding: 0.75rem 0.95rem;
+    border: 1px solid var(--color-border);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text);
+}
+
+.population-card-status.is-muted {
+    color: var(--color-text-dim);
+    border-color: var(--color-border);
+}
+
+.family-tree-placeholder {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    gap: var(--space-lg);
+    align-items: start;
+}
+
+.family-tree-placeholder-copy h2,
+.family-tree-placeholder-copy p {
+    margin-right: var(--space-md);
+}
+
+.family-tree-spotlight-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-sm);
+}
+
+.family-tree-spotlight-chip {
+    padding: var(--space-md);
+    border: 1px solid var(--color-border);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0) 58%, color-mix(in srgb, var(--island-accent) 28%, transparent) 100%),
+        var(--color-surface-raised);
+    text-align: left;
+}
+
+.family-tree-spotlight-chip:hover {
+    border-color: var(--color-text);
+}
+
+.family-tree-spotlight-chip span,
+.family-tree-spotlight-chip em {
+    display: block;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-dim);
+    font-style: normal;
+}
+
+.family-tree-spotlight-chip strong {
+    display: block;
+    margin: 0.35rem 0;
+    font-size: 1rem;
 }
 
 .family-tree-tooltip {
@@ -796,13 +917,21 @@ a:hover {
 }
 
 @media (max-width: 980px) {
-    .population-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    main.container.page-family-trees {
+        padding-inline: var(--space-lg);
+    }
+
+    .population-island-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .tree-node {
         width: 9rem;
         padding: 0.75rem;
+    }
+
+    .family-tree-placeholder {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -811,8 +940,9 @@ a:hover {
         flex-direction: column;
     }
 
-    .population-grid {
-        grid-template-columns: 1fr;
+    .population-island-grid,
+    .family-tree-spotlight-row {
+        grid-template-columns: 1fr 1fr;
     }
 
     .family-tree-canvas {
@@ -822,6 +952,17 @@ a:hover {
 
     .tree-node {
         width: 8.2rem;
+    }
+
+    .family-tree-intro-actions {
+        justify-content: center;
+    }
+}
+
+@media (max-width: 560px) {
+    .population-island-grid,
+    .family-tree-spotlight-row {
+        grid-template-columns: 1fr;
     }
 }
 

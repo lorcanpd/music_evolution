@@ -25,6 +25,10 @@ use maud::{html, Markup, PreEscaped, DOCTYPE};
 
 /// Base HTML layout with consistent styling
 fn base_layout(title: &str, content: Markup) -> Markup {
+    base_layout_with_main_class(title, "container", content)
+}
+
+fn base_layout_with_main_class(title: &str, main_class: &str, content: Markup) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" data-theme="dark" {
@@ -38,7 +42,7 @@ fn base_layout(title: &str, content: Markup) -> Markup {
                 link rel="stylesheet" href="/static/style.css";
             }
             body {
-                main class="container" {
+                main class=(main_class) {
                     header {
                         h1 { "Music Evolution" }
                         p class="subtitle" { "From beeps and boops, to beats and bops" }
@@ -691,7 +695,7 @@ pub async fn family_trees_page(state: &State<AppState>) -> RawHtml<String> {
                 }
             }
         };
-        return RawHtml(base_layout("Family Trees", content).into_string());
+        return RawHtml(base_layout_with_main_class("Family Trees", "container page-family-trees", content).into_string());
     }
 
     if family_trees::is_rebuild_in_progress() {
@@ -710,7 +714,7 @@ pub async fn family_trees_page(state: &State<AppState>) -> RawHtml<String> {
                 (PreEscaped("setTimeout(() => window.location.reload(), 5000);"))
             }
         };
-        return RawHtml(base_layout("Family Trees - Rebuilding", content).into_string());
+        return RawHtml(base_layout_with_main_class("Family Trees - Rebuilding", "container page-family-trees", content).into_string());
     }
 
     if family_trees::needs_rebuild(&state.pool).await.unwrap_or(true) {
@@ -743,7 +747,7 @@ pub async fn family_trees_page(state: &State<AppState>) -> RawHtml<String> {
                 (PreEscaped("setTimeout(() => window.location.reload(), 5000);"))
             }
         };
-        return RawHtml(base_layout("Family Trees - Rebuilding", content).into_string());
+        return RawHtml(base_layout_with_main_class("Family Trees - Rebuilding", "container page-family-trees", content).into_string());
     }
 
     let content = html! {
@@ -757,6 +761,9 @@ pub async fn family_trees_page(state: &State<AppState>) -> RawHtml<String> {
                 p class="meta" {
                     "Edges show direct parent-child relatedness. Hover a node to inspect its similarity to the active spotlight."
                 }
+                div class="btn-group family-tree-intro-actions" {
+                    a href="/" class="btn btn-secondary" { "Back to Home" }
+                }
             }
             section id="family-tree-app" class="family-tree-app" {
                 div class="spinner" {}
@@ -765,7 +772,7 @@ pub async fn family_trees_page(state: &State<AppState>) -> RawHtml<String> {
         script src="/static/family_trees.js" {}
     };
 
-    RawHtml(base_layout("Family Trees", content).into_string())
+    RawHtml(base_layout_with_main_class("Family Trees", "container page-family-trees", content).into_string())
 }
 
 #[get("/api/family_trees")]
