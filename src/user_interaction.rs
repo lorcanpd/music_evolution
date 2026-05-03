@@ -13,6 +13,8 @@ use deadpool_postgres::Pool;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
+const STATIC_ASSET_VERSION: &str = "ft-20260503-1";
+
 /// Maximum number of audio files to cache in memory
 pub const AUDIO_CACHE_MAX_ENTRIES: usize = 100;
 
@@ -26,7 +28,7 @@ fn base_layout(title: &str, content: Markup) -> Markup {
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) " | Music Evolution" }
                 link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css";
-                link rel="stylesheet" href="/static/style.css";
+                link rel="stylesheet" href={(format!("/static/style.css?v={}", STATIC_ASSET_VERSION))};
             }
             body {
                 main class="container" {

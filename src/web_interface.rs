@@ -23,6 +23,8 @@ use crate::play_genes::BinaryContent;
 use std::sync::atomic::Ordering;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
+const STATIC_ASSET_VERSION: &str = "ft-20260503-1";
+
 /// Base HTML layout with consistent styling
 fn base_layout(title: &str, content: Markup) -> Markup {
     base_layout_with_main_class(title, "container", content)
@@ -39,7 +41,7 @@ fn base_layout_with_main_class(title: &str, main_class: &str, content: Markup) -
                 // Pico.css for base styling
                 link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css";
                 // Custom styles
-                link rel="stylesheet" href="/static/style.css";
+                link rel="stylesheet" href={(format!("/static/style.css?v={}", STATIC_ASSET_VERSION))};
             }
             body {
                 main class=(main_class) {
@@ -769,7 +771,7 @@ pub async fn family_trees_page(state: &State<AppState>) -> RawHtml<String> {
                 div class="spinner" {}
             }
         }
-        script src="/static/family_trees.js" {}
+        script src=(format!("/static/family_trees.js?v={}", STATIC_ASSET_VERSION)) {}
     };
 
     RawHtml(base_layout_with_main_class("Family Trees", "container page-family-trees", content).into_string())
