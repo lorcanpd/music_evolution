@@ -3,7 +3,7 @@
     metadata: null,
     activeSpotIndex: null,
     activeTree: null,
-    activePathTarget: null,
+    selectedTreeSongId: null,
     loadingTree: false,
     audio: new Audio(),
     currentSongId: null,
@@ -66,6 +66,8 @@
     const app = document.getElementById("family-tree-app");
     if (!app || !state.metadata) return;
 
+    ensureHomeButton();
+
     app.innerHTML = `
       <section class="family-tree-stage">
         <div id="family-tree-panel" class="family-tree-panel"></div>
@@ -104,7 +106,7 @@
         <article class="card family-tree-placeholder">
           <div class="family-tree-placeholder-copy">
             <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-            <p>Pick one of the three spotlight songs to reveal a compact pedigree view above the population.</p>
+            <p>Pick an island spotlight to reveal its pedigree above the population.</p>
           </div>
           <div class="family-tree-spotlight-row">${spotlightMarkup}</div>
         </article>
@@ -125,32 +127,12 @@
       state.metadata.previous_generation,
     ].filter((generation, index, array) => generation >= 0 && array.indexOf(generation) === index);
 
-    const rowHeights = 170;
+    const rowHeights = 210;
     const height = rowOrder.length * rowHeights;
-    const yByGeneration = new Map(rowOrder.map((generation, index) => [generation, 72 + index * rowHeights]));
-    const edgeMap = new Map(tree.edges.map((edge) => [edgeKey(edge.parent_song_id, edge.child_song_id), edge]));
-    const ancestryEdgeKeys = computeAncestryEdgeKeys(tree);
-    const revealedEdgeKeys = state.activePathTarget === null
-      ? ancestryEdgeKeys
-      : computeRevealedEdgeKeys(tree, edgeMap, state.activePathTarget) || ancestryEdgeKeys;
+    const yByGeneration = new Map(rowOrder.map((generation, index) => [generation, 88 + index * rowHeights]));
+    const activeEdgeKeys = computeAncestorEdgeKeys(tree, state.selectedTreeSongId || tree.spotlight_song_id);
+    const layoutBySongId = buildTreeLayout(tree);
     const activePlayableSet = new Set(tree.nodes.map((node) => node.song_id));
-
-    const svgEdges = tree.edges.map((edge) => {
-      const parent = tree.nodes.find((node) => node.song_id === edge.parent_song_id);
-      const child = tree.nodes.find((node) => node.song_id === edge.child_song_id);
-      if (!parent || !child) return "";
-
-      const active = revealedEdgeKeys.has(edgeKey(edge.parent_song_id, edge.child_song_id));
-      const x1 = 80 + parent.x * 840;
-      const y1 = (yByGeneration.get(parent.generation) || 0) + 48;
-      const x2 = 80 + child.x * 840;
-      const y2 = (yByGeneration.get(child.generation) || 0) - 10;
-      const weight = Math.max(1.5, edge.similarity * 8.5);
-      const opacity = active ? Math.max(0.45, edge.similarity) : 0.12;
-      const cls = active ? "tree-edge tree-edge-active" : "tree-edge";
-
-      return `<line class="${cls}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke-width:${weight}px;opacity:${opacity}"></line>`;
-    }).join("");
 
     const rowLabels = rowOrder.map((generation, index) => {
       const rowName = rowOrder.length - index === 3 ? "G-3" : rowOrder.length - index === 2 ? "G-2" : "G-1";
@@ -160,16 +142,17 @@
     const nodeMarkup = tree.nodes.map((node) => {
       const color = islandColor(node.node);
       const y = yByGeneration.get(node.generation) || 0;
+      const layout = layoutBySongId.get(node.song_id) || { leftPct: 50, widthRem: 8.4, densityClass: "" };
       const isSpotlight = node.song_id === tree.spotlight_song_id;
-      const isPathTarget = node.song_id === state.activePathTarget;
-      const hasRevealPath = tree.reveal_paths.some((path) => path.target_song_id === node.song_id);
-      const interactive = hasRevealPath || isSpotlight;
+      const isSelected = node.song_id === (state.selectedTreeSongId || tree.spotlight_song_id);
+      const interactive = hasVisibleAncestorPath(tree, node.song_id) || isSpotlight;
       const buttonClass = [
         "tree-node",
         `tree-role-${node.role.replace(/_/g, "-")}`,
         isSpotlight ? "is-spotlight" : "",
-        isPathTarget ? "is-path-target" : "",
+        isSelected ? "is-path-target" : "",
         interactive ? "is-interactive" : "",
+        layout.densityClass,
       ].filter(Boolean).join(" ");
 
       return `
@@ -178,7 +161,7 @@
           class="${buttonClass}"
           data-song-id="${node.song_id}"
           data-node-role="${node.role}"
-          style="left:${6 + node.x * 88}%; top:${y}px; --island-accent:${color};"
+          style="left:${layout.leftPct}%; top:${y}px; --island-accent:${color}; --tree-node-width:${layout.widthRem}rem;"
         >
           <span class="tree-node-label">Island ${node.node}</span>
           <span class="tree-node-id">#${node.song_id}</span>
@@ -204,9 +187,7 @@
         </div>
         <div id="family-tree-canvas" class="family-tree-canvas" style="height:${height}px">
           ${rowLabels}
-          <svg class="family-tree-svg" viewBox="0 0 1000 ${height}" preserveAspectRatio="none">
-            ${svgEdges}
-          </svg>
+          <svg class="family-tree-svg" preserveAspectRatio="none"></svg>
           ${nodeMarkup}
         </div>
       </article>
@@ -215,14 +196,14 @@
     document.getElementById("collapse-family-tree")?.addEventListener("click", () => {
       state.activeSpotIndex = null;
       state.activeTree = null;
-      state.activePathTarget = null;
+      state.selectedTreeSongId = null;
       renderApp();
     });
 
     const canvas = document.getElementById("family-tree-canvas");
     canvas?.addEventListener("click", (event) => {
       if (event.target === canvas || event.target.classList.contains("family-tree-svg")) {
-        state.activePathTarget = null;
+        state.selectedTreeSongId = tree.spotlight_song_id;
         renderTreePanel();
       }
     });
@@ -239,12 +220,10 @@
           return;
         }
 
-        if (songId === tree.spotlight_song_id) {
-          state.activePathTarget = null;
-        } else if (tree.reveal_paths.some((path) => path.target_song_id === songId)) {
-          state.activePathTarget = songId;
+        if (hasVisibleAncestorPath(tree, songId) || songId === tree.spotlight_song_id) {
+          state.selectedTreeSongId = songId;
+          renderTreePanel();
         }
-        renderTreePanel();
       });
 
       button.addEventListener("mouseenter", (event) => {
@@ -257,12 +236,76 @@
       button.addEventListener("mouseleave", hideTooltip);
     });
 
+    const canvasElement = document.getElementById("family-tree-canvas");
+    if (canvasElement) {
+      renderSelectedEdges(tree, canvasElement, activeEdgeKeys);
+    }
+
     state.activePlayableSet = activePlayableSet;
   }
 
   function renderPopulation() {
     const container = document.getElementById("family-tree-population");
     if (!container || !state.metadata) return;
+
+    if (state.activeSpotIndex === null || !state.activeTree) {
+      const spotlightCards = state.metadata.spotlights.map((spotlight) => {
+        const song = state.metadata.population.find((candidate) => candidate.song_id === spotlight.song_id);
+        return `
+          <article class="population-card is-spotlight is-playable" style="--island-accent:${islandColor(spotlight.node)}" data-card-spot="${spotlight.index}">
+            <div class="population-card-meta">
+              <span class="population-card-island">Island ${spotlight.node}</span>
+              <span class="population-card-badge">Spotlight ${spotlight.index + 1}</span>
+            </div>
+            <h3>#${spotlight.song_id}</h3>
+            <p>Always playable</p>
+            <div class="population-card-actions">
+              <button type="button" class="btn btn-secondary" data-play-song="${spotlight.song_id}">Play</button>
+              <button type="button" class="btn btn-primary" data-activate-spot="${spotlight.index}">Show Tree</button>
+            </div>
+          </article>
+        `;
+      }).join("");
+
+      container.innerHTML = `
+        <article class="card family-tree-population-card">
+          <div class="family-tree-header">
+            <div>
+              <h2>Previous Generation #${state.metadata.previous_generation}</h2>
+              <p class="meta">Choose an island spotlight to open its family tree.</p>
+            </div>
+          </div>
+          <div class="population-spotlights-only">${spotlightCards}</div>
+        </article>
+      `;
+
+      container.querySelectorAll("[data-play-song]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          const songId = Number(button.dataset.playSong);
+          togglePlayback(songId, `/family_tree_wav/${songId}`, button);
+          event.stopPropagation();
+        });
+      });
+
+      container.querySelectorAll("[data-activate-spot]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const spotIndex = Number(button.dataset.activateSpot);
+          await toggleSpotlight(spotIndex);
+        });
+      });
+
+      container.querySelectorAll("[data-card-spot]").forEach((card) => {
+        card.addEventListener("click", async (event) => {
+          const target = event.target instanceof Element ? event.target : null;
+          if (target && (target.closest("[data-play-song]") || target.closest("[data-activate-spot]"))) {
+            return;
+          }
+          await toggleSpotlight(Number(card.dataset.cardSpot));
+        });
+      });
+
+      return;
+    }
 
     const activeRelativeIds = new Set(
       (state.activeTree?.nodes || [])
@@ -300,7 +343,7 @@
             ${spotlightSummary ? `<span class="population-card-badge">Spotlight ${spotlightSummary.index + 1}</span>` : ""}
           </div>
           <h3>#${song.song_id}</h3>
-          <p>${spotlightSummary ? "Always playable" : (isRelative ? "Playable for this spotlight" : "Locked until a related spotlight is active")}</p>
+          <p>${spotlightSummary ? "Always playable" : (isRelative ? "Relative to active spotlight" : "Locked")}</p>
           ${spotlightSummary ? `
             <div class="population-card-actions">
               <button type="button" class="btn btn-secondary" data-play-song="${song.song_id}">Play</button>
@@ -338,7 +381,7 @@
         <div class="family-tree-header">
           <div>
             <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-            <p class="meta">Population grouped by island. Spotlight songs are always playable.</p>
+            <p class="meta">Grouped by island. Spotlight songs are always playable.</p>
           </div>
         </div>
         <div class="population-groups">${groupsMarkup}</div>
@@ -372,10 +415,20 @@
     });
   }
 
+  function ensureHomeButton() {
+    if (document.querySelector(".family-tree-home-link")) return;
+    const intro = document.querySelector(".family-tree-intro");
+    if (!intro) return;
+    const actions = document.createElement("div");
+    actions.className = "btn-group family-tree-intro-actions";
+    actions.innerHTML = `<a href="/" class="btn btn-secondary family-tree-home-link">Back to Home</a>`;
+    intro.appendChild(actions);
+  }
+
   async function activateSpotlight(spotIndex) {
     state.loadingTree = true;
     state.activeSpotIndex = spotIndex;
-    state.activePathTarget = null;
+    state.selectedTreeSongId = null;
     renderTreePanel();
     renderPopulation();
 
@@ -387,6 +440,7 @@
       }
       state.treeCache.set(spotIndex, tree);
       state.activeTree = tree;
+      state.selectedTreeSongId = tree.spotlight_song_id;
     } catch (error) {
       state.activeTree = null;
       state.activeSpotIndex = null;
@@ -410,7 +464,7 @@
     if (state.activeSpotIndex === spotIndex) {
       state.activeSpotIndex = null;
       state.activeTree = null;
-      state.activePathTarget = null;
+      state.selectedTreeSongId = null;
       renderApp();
       return;
     }
@@ -459,50 +513,91 @@
     state.currentSongId = null;
   }
 
-  function computeAncestryEdgeKeys(tree) {
-    const parentByChild = new Map();
-    tree.edges.forEach((edge) => {
-      const list = parentByChild.get(edge.child_song_id) || [];
-      list.push(edge.parent_song_id);
-      parentByChild.set(edge.child_song_id, list);
-    });
-
+  function computeAncestorEdgeKeys(tree, startSongId) {
     const active = new Set();
-    const queue = [tree.spotlight_song_id];
+    const queue = [startSongId];
     const seen = new Set(queue);
 
     while (queue.length > 0) {
       const childId = queue.shift();
-      const parents = parentByChild.get(childId) || [];
-      parents.forEach((parentId) => {
-        active.add(edgeKey(parentId, childId));
-        if (!seen.has(parentId)) {
-          seen.add(parentId);
-          queue.push(parentId);
-        }
-      });
+      tree.edges
+        .filter((edge) => edge.child_song_id === childId)
+        .forEach((edge) => {
+          active.add(edgeKey(edge.parent_song_id, edge.child_song_id));
+          if (!seen.has(edge.parent_song_id)) {
+            seen.add(edge.parent_song_id);
+            queue.push(edge.parent_song_id);
+          }
+        });
     }
 
     return active;
   }
 
-  function computeRevealedEdgeKeys(tree, edgeMap, targetSongId) {
-    const revealPath = tree.reveal_paths.find((path) => path.target_song_id === targetSongId);
-    if (!revealPath) return null;
+  function hasVisibleAncestorPath(tree, songId) {
+    return tree.edges.some((edge) => edge.child_song_id === songId);
+  }
 
-    const keys = new Set();
-    for (let index = 0; index < revealPath.node_path.length - 1; index += 1) {
-      const a = revealPath.node_path[index];
-      const b = revealPath.node_path[index + 1];
-      const forward = edgeKey(a, b);
-      const reverse = edgeKey(b, a);
-      if (edgeMap.has(forward)) {
-        keys.add(forward);
-      } else if (edgeMap.has(reverse)) {
-        keys.add(reverse);
-      }
-    }
-    return keys;
+  function buildTreeLayout(tree) {
+    const layout = new Map();
+    const generations = [...new Set(tree.nodes.map((node) => node.generation))].sort((a, b) => a - b);
+
+    generations.forEach((generation) => {
+      const rowNodes = tree.nodes
+        .filter((node) => node.generation === generation)
+        .sort((a, b) => a.x - b.x || a.song_id - b.song_id);
+
+      if (rowNodes.length === 0) return;
+
+      const count = rowNodes.length;
+      const leftPad = count >= 10 ? 4 : count >= 8 ? 5 : count >= 6 ? 7 : 10;
+      const span = 100 - leftPad * 2;
+      const widthRem = count >= 10 ? 5.2 : count >= 8 ? 5.8 : count >= 6 ? 6.8 : 8.4;
+      const densityClass = count >= 10 ? 'is-dense' : count >= 8 ? 'is-compact' : '';
+
+      rowNodes.forEach((node, index) => {
+        const leftPct = count === 1 ? 50 : leftPad + (index / (count - 1)) * span;
+        layout.set(node.song_id, { leftPct, widthRem, densityClass });
+      });
+    });
+
+    return layout;
+  }
+
+  function renderSelectedEdges(tree, canvas, activeEdgeKeys) {
+    const svg = canvas.querySelector('.family-tree-svg');
+    if (!svg) return;
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const width = Math.max(canvasRect.width, 1);
+    const height = Math.max(canvasRect.height, 1);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+    const nodeRects = new Map();
+    canvas.querySelectorAll('.tree-node').forEach((nodeEl) => {
+      const songId = Number(nodeEl.dataset.songId);
+      const rect = nodeEl.getBoundingClientRect();
+      nodeRects.set(songId, {
+        x: rect.left - canvasRect.left + rect.width / 2,
+        top: rect.top - canvasRect.top,
+        bottom: rect.bottom - canvasRect.top,
+      });
+    });
+
+    const svgEdges = tree.edges
+      .filter((edge) => activeEdgeKeys.has(edgeKey(edge.parent_song_id, edge.child_song_id)))
+      .map((edge) => {
+        const parent = nodeRects.get(edge.parent_song_id);
+        const child = nodeRects.get(edge.child_song_id);
+        if (!parent || !child) return '';
+
+        const weight = Math.max(1.75, edge.similarity * 8.5);
+        const opacity = Math.max(0.5, edge.similarity);
+        return `<line class="tree-edge tree-edge-active" x1="${parent.x}" y1="${parent.bottom}" x2="${child.x}" y2="${child.top}" style="stroke-width:${weight}px;opacity:${opacity}"></line>`;
+      })
+      .join('');
+
+    svg.innerHTML = svgEdges;
   }
 
   function createTooltip() {

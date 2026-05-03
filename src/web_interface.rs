@@ -755,7 +755,7 @@ pub async fn family_trees_page(state: &State<AppState>) -> RawHtml<String> {
             article class="card family-tree-intro" {
                 h2 { "Family Trees" }
                 p {
-                    "Explore the previous generation, activate one of the three spotlight songs, "
+                    "Explore the previous generation, activate an island spotlight, "
                     "and trace its family back through parents, grandparents, siblings, and cousins."
                 }
                 p class="meta" {

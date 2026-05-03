@@ -281,9 +281,6 @@ fn select_spotlights(population: &[PopulationRecord]) -> Vec<PopulationRecord> {
     for song in sorted {
         if used_nodes.insert(song.node) {
             chosen.push(song);
-            if chosen.len() == 3 {
-                break;
-            }
         }
     }
     chosen
@@ -363,19 +360,25 @@ fn build_spotlight_tree(
         }
     }
 
-    let mut parent_nodes = BTreeSet::new();
-    for song_id in &generation_nodes {
-        if let Some(record) = records.get(song_id) {
-            parent_nodes.extend(collect_parent_ids(record));
-        }
-    }
+    let parent_nodes: BTreeSet<i32> = if use_grandparent_rule {
+        records
+            .values()
+            .filter(|record| record.generation == spotlight.generation - 1)
+            .filter(|record| {
+                let parent_ids = collect_parent_ids(record);
+                !parent_ids.is_disjoint(&spotlight_grandparents)
+            })
+            .map(|record| record.song_id)
+            .collect()
+    } else {
+        spotlight_parents.iter().copied().collect()
+    };
 
-    let mut grandparent_nodes = BTreeSet::new();
-    for parent_id in &parent_nodes {
-        if let Some(record) = records.get(parent_id) {
-            grandparent_nodes.extend(collect_parent_ids(record));
-        }
-    }
+    let grandparent_nodes: BTreeSet<i32> = if use_grandparent_rule {
+        spotlight_grandparents.iter().copied().collect()
+    } else {
+        BTreeSet::new()
+    };
 
     let mut visible_nodes = BTreeSet::new();
     visible_nodes.extend(generation_nodes.iter().copied());
@@ -770,7 +773,7 @@ mod tests {
         let selected = select_spotlights(&population);
         let ids: Vec<i32> = selected.into_iter().map(|song| song.song_id).collect();
 
-        assert_eq!(ids, vec![10, 20, 30]);
+        assert_eq!(ids, vec![10, 20, 30, 40]);
     }
 
     #[test]
@@ -783,10 +786,11 @@ mod tests {
             (3, song_record(3, 2, 1, Some(1), Some(2), 3)),
             (4, song_record(4, 2, 2, Some(1), Some(2), 4)),
             (5, song_record(5, 2, 3, Some(11), None, 5)),
+            (6, song_record(6, 2, 4, Some(11), None, 6)),
             (7, song_record(7, 3, 1, Some(3), None, 7)),
             (8, song_record(8, 3, 1, Some(3), None, 8)),
             (9, song_record(9, 3, 2, Some(4), None, 9)),
-            (10, song_record(10, 3, 3, Some(5), None, 10)),
+            (10, song_record(10, 3, 3, Some(5), Some(6), 10)),
         ]);
 
         let tree = build_spotlight_tree(&spotlight, &records).unwrap();
@@ -800,6 +804,12 @@ mod tests {
         assert!(visible.contains(&1));
         assert!(visible.contains(&2));
         assert!(!visible.contains(&10));
+        assert!(!visible.contains(&5));
+        assert!(!visible.contains(&6));
+        assert_eq!(
+            tree.nodes.iter().filter(|node| node.role == "grandparent").count(),
+            2
+        );
 
         let cousin_path = tree
             .reveal_paths
