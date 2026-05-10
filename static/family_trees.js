@@ -268,7 +268,6 @@
     state.activeSpotIndex = spotIndex;
     state.selectedTreeSongId = null;
     renderTreePanel();
-    renderPopulation();
 
     try {
       const cached = state.treeCache.get(spotIndex);
@@ -294,7 +293,6 @@
     } finally {
       state.loadingTree = false;
       renderTreePanel();
-      renderPopulation();
     }
   }
 
