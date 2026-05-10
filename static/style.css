@@ -621,8 +621,12 @@ main.container {
 
 .family-tree-spotlight-row {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
     gap: 0.75rem;
+}
+
+.family-tree-spotlight-row-inline {
+    margin-bottom: 1rem;
 }
 
 .family-tree-spotlight-chip {
@@ -634,7 +638,8 @@ main.container {
     text-align: left;
 }
 
-.family-tree-spotlight-chip:hover {
+.family-tree-spotlight-chip:hover,
+.family-tree-spotlight-chip.is-active {
     border-color: var(--color-text);
 }
 
@@ -666,12 +671,18 @@ main.container {
     padding: 1rem 1.25rem 1.25rem;
 }
 
+.family-tree-canvas-wrap {
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-top: 1px solid var(--color-border);
+    padding-top: 1rem;
+}
+
 .family-tree-canvas {
     position: relative;
     min-height: 40rem;
-    overflow: hidden;
-    padding: 1.5rem 0 0.25rem;
-    border-top: 1px solid var(--color-border);
+    overflow: visible;
+    padding: 0.75rem 0 0.25rem;
 }
 
 .family-tree-svg {
@@ -699,8 +710,8 @@ main.container {
 .tree-node {
     position: absolute;
     transform: translateX(-50%);
-    width: 8.4rem;
-    padding: 0.55rem 0.6rem 0.65rem;
+    width: 6.4rem;
+    padding: 0.45rem 0.45rem 0.5rem;
     border: 1px solid var(--color-border);
     background:
         linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0) 45%, color-mix(in srgb, var(--island-accent) 24%, transparent) 100%),
@@ -718,7 +729,7 @@ main.container {
 .tree-node-label,
 .tree-node-role {
     display: block;
-    font-size: 0.58rem;
+    font-size: 0.5rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--color-text-dim);
@@ -726,21 +737,21 @@ main.container {
 
 .tree-node-id {
     display: block;
-    margin: 0.25rem 0;
-    font-size: 0.9rem;
+    margin: 0.2rem 0;
+    font-size: 0.78rem;
     font-weight: 700;
 }
 
 .tree-node-actions {
     display: flex;
     justify-content: space-between;
-    gap: 0.5rem;
-    margin-top: 0.45rem;
+    gap: 0.35rem;
+    margin-top: 0.35rem;
 }
 
 .tree-node-similarity,
 .tree-node-play {
-    font-size: 0.58rem;
+    font-size: 0.5rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
 }
@@ -915,10 +926,12 @@ main.container {
         grid-template-columns: 1fr;
     }
 
-    .family-tree-spotlight-row,
-    .population-island-grid,
-    .population-spotlights-only {
+    .family-tree-spotlight-row {
         grid-template-columns: 1fr 1fr;
+    }
+
+    .family-tree-canvas {
+        min-width: 760px !important;
     }
 
     .family-tree-header {
@@ -931,13 +944,20 @@ main.container {
 }
 
 @media (max-width: 560px) {
-    .family-tree-spotlight-row,
-    .population-island-grid,
-    .population-spotlights-only {
+    .family-tree-spotlight-row {
         grid-template-columns: 1fr;
     }
 
+    .family-tree-canvas {
+        min-width: 680px !important;
+    }
+
     .tree-node {
-        width: 8.25rem;
+        width: 5.6rem;
+        padding: 0.38rem 0.36rem 0.44rem;
+    }
+
+    .tree-node-id {
+        font-size: 0.7rem;
     }
 }

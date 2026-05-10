@@ -13,7 +13,7 @@ use deadpool_postgres::Pool;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
-const STATIC_ASSET_VERSION: &str = "ft-20260503-1";
+const STATIC_ASSET_VERSION: &str = "ft-20260510-1";
 
 /// Maximum number of audio files to cache in memory
 pub const AUDIO_CACHE_MAX_ENTRIES: usize = 100;

@@ -66,17 +66,13 @@
     const app = document.getElementById("family-tree-app");
     if (!app || !state.metadata) return;
 
-    ensureHomeButton();
-
     app.innerHTML = `
       <section class="family-tree-stage">
         <div id="family-tree-panel" class="family-tree-panel"></div>
-        <div id="family-tree-population" class="family-tree-population"></div>
       </section>
     `;
 
     renderTreePanel();
-    renderPopulation();
   }
 
   function renderTreePanel() {
@@ -94,29 +90,19 @@
     }
 
     if (!state.activeTree || state.activeSpotIndex === null) {
-      const spotlightMarkup = state.metadata.spotlights.map((spotlight) => `
-        <button type="button" class="family-tree-spotlight-chip" data-activate-placeholder="${spotlight.index}" style="--island-accent:${islandColor(spotlight.node)}">
-          <span>Spotlight ${spotlight.index + 1}</span>
-          <strong>#${spotlight.song_id}</strong>
-          <em>Island ${spotlight.node}</em>
-        </button>
-      `).join("");
+      const spotlightMarkup = renderSpotlightChips();
 
       panel.innerHTML = `
         <article class="card family-tree-placeholder">
           <div class="family-tree-placeholder-copy">
             <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-            <p>Pick one of the three spotlight songs to reveal its pedigree above the population.</p>
+            <p>Pick an island spotlight to reveal its pedigree.</p>
           </div>
           <div class="family-tree-spotlight-row">${spotlightMarkup}</div>
         </article>
       `;
 
-      panel.querySelectorAll("[data-activate-placeholder]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          await toggleSpotlight(Number(button.dataset.activatePlaceholder));
-        });
-      });
+      bindSpotlightChipActions(panel);
       return;
     }
 
@@ -129,6 +115,8 @@
 
     const rowHeights = 210;
     const height = rowOrder.length * rowHeights;
+    const widestRow = Math.max(...rowOrder.map((generation) => tree.nodes.filter((node) => node.generation === generation).length), 1);
+    const canvasWidth = Math.max(860, widestRow * 112);
     const yByGeneration = new Map(rowOrder.map((generation, index) => [generation, 88 + index * rowHeights]));
     const activeEdgeKeys = computeAncestorEdgeKeys(tree, state.selectedTreeSongId || tree.spotlight_song_id);
     const activePlayableSet = new Set(tree.nodes.map((node) => node.song_id));
@@ -137,6 +125,8 @@
       const rowName = rowOrder.length - index === 3 ? "G-3" : rowOrder.length - index === 2 ? "G-2" : "G-1";
       return `<div class="family-tree-row-label" style="top:${(yByGeneration.get(generation) || 0) - 38}px">${rowName}</div>`;
     }).join("");
+
+    const spotlightMarkup = renderSpotlightChips();
 
     const nodeMarkup = tree.nodes.map((node) => {
       const color = islandColor(node.node);
@@ -182,10 +172,13 @@
             <button type="button" class="btn btn-secondary" id="collapse-family-tree">Collapse</button>
           </div>
         </div>
-        <div id="family-tree-canvas" class="family-tree-canvas" style="height:${height}px">
-          ${rowLabels}
-          <svg class="family-tree-svg" preserveAspectRatio="none"></svg>
-          ${nodeMarkup}
+        <div class="family-tree-spotlight-row family-tree-spotlight-row-inline">${spotlightMarkup}</div>
+        <div class="family-tree-canvas-wrap">
+          <div id="family-tree-canvas" class="family-tree-canvas" style="height:${height}px; min-width:${canvasWidth}px">
+            ${rowLabels}
+            <svg class="family-tree-svg" preserveAspectRatio="none"></svg>
+            ${nodeMarkup}
+          </div>
         </div>
       </article>
     `;
@@ -196,6 +189,8 @@
       state.selectedTreeSongId = null;
       renderApp();
     });
+
+    bindSpotlightChipActions(panel);
 
     const canvas = document.getElementById("family-tree-canvas");
     canvas?.addEventListener("click", (event) => {
@@ -241,185 +236,31 @@
     state.activePlayableSet = activePlayableSet;
   }
 
-  function renderPopulation() {
-    const container = document.getElementById("family-tree-population");
-    if (!container || !state.metadata) return;
-
-    if (state.activeSpotIndex === null || !state.activeTree) {
-      const spotlightCards = state.metadata.spotlights.map((spotlight) => {
-        const song = state.metadata.population.find((candidate) => candidate.song_id === spotlight.song_id);
-        return `
-          <article class="population-card is-spotlight is-playable" style="--island-accent:${islandColor(spotlight.node)}" data-card-spot="${spotlight.index}">
-            <div class="population-card-meta">
-              <span class="population-card-island">Island ${spotlight.node}</span>
-              <span class="population-card-badge">Spotlight ${spotlight.index + 1}</span>
-            </div>
-            <h3>#${spotlight.song_id}</h3>
-            <p>Always playable</p>
-            <div class="population-card-actions">
-              <button type="button" class="btn btn-secondary" data-play-song="${spotlight.song_id}">Play</button>
-              <button type="button" class="btn btn-primary" data-activate-spot="${spotlight.index}">Show Tree</button>
-            </div>
-          </article>
-        `;
-      }).join("");
-
-      container.innerHTML = `
-        <article class="card family-tree-population-card">
-          <div class="family-tree-header">
-            <div>
-              <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-              <p class="meta">Choose a spotlight to open its family tree.</p>
-            </div>
-          </div>
-          <div class="population-spotlights-only">${spotlightCards}</div>
-        </article>
-      `;
-
-      container.querySelectorAll("[data-play-song]").forEach((button) => {
-        button.addEventListener("click", (event) => {
-          const songId = Number(button.dataset.playSong);
-          togglePlayback(songId, `/family_tree_wav/${songId}`, button);
-          event.stopPropagation();
-        });
-      });
-
-      container.querySelectorAll("[data-activate-spot]").forEach((button) => {
-        button.addEventListener("click", async () => {
-          const spotIndex = Number(button.dataset.activateSpot);
-          await toggleSpotlight(spotIndex);
-        });
-      });
-
-      container.querySelectorAll("[data-card-spot]").forEach((card) => {
-        card.addEventListener("click", async (event) => {
-          const target = event.target instanceof Element ? event.target : null;
-          if (target && (target.closest("[data-play-song]") || target.closest("[data-activate-spot]"))) {
-            return;
-          }
-          await toggleSpotlight(Number(card.dataset.cardSpot));
-        });
-      });
-
-      return;
-    }
-
-    const activeRelativeIds = new Set(
-      (state.activeTree?.nodes || [])
-        .filter((node) => node.generation === state.metadata.previous_generation)
-        .map((node) => node.song_id)
-    );
-
-    const grouped = new Map();
-    state.metadata.population.forEach((song) => {
-      if (!grouped.has(song.node)) grouped.set(song.node, []);
-      grouped.get(song.node).push(song);
-    });
-
-    const groupsMarkup = [...grouped.entries()].map(([node, songs]) => {
-      const cards = songs.map((song) => {
-      const spotlightSummary = state.metadata.spotlights.find((spot) => spot.song_id === song.song_id);
-      const isActiveSpotlight = spotlightSummary && spotlightSummary.index === state.activeSpotIndex;
-      const isRelative = !spotlightSummary && activeRelativeIds.has(song.song_id);
-      const playable = Boolean(spotlightSummary) || isRelative;
-      const buttonLabel = spotlightSummary
-        ? (isActiveSpotlight ? "Hide Tree" : "Show Tree")
-        : "Relative";
-      const cardClasses = [
-        "population-card",
-        spotlightSummary ? "is-spotlight" : "",
-        isActiveSpotlight ? "is-active" : "",
-        isRelative ? "is-relative" : "",
-        playable ? "is-playable" : "is-inert",
-      ].filter(Boolean).join(" ");
-
+  function renderSpotlightChips() {
+    return state.metadata.spotlights.map((spotlight) => {
+      const isActive = spotlight.index === state.activeSpotIndex;
       return `
-        <article class="${cardClasses}" style="--island-accent:${islandColor(song.node)}" ${spotlightSummary ? `data-card-spot="${spotlightSummary.index}"` : ""}>
-          <div class="population-card-meta">
-            <span class="population-card-island">Island ${song.node}</span>
-            ${spotlightSummary ? `<span class="population-card-badge">Spotlight ${spotlightSummary.index + 1}</span>` : ""}
-          </div>
-          <h3>#${song.song_id}</h3>
-          <p>${spotlightSummary ? "Always playable" : (isRelative ? "Relative to active spotlight" : "Locked")}</p>
-          ${spotlightSummary ? `
-            <div class="population-card-actions">
-              <button type="button" class="btn btn-secondary" data-play-song="${song.song_id}">Play</button>
-              <button type="button" class="btn btn-primary" data-activate-spot="${spotlightSummary.index}">${buttonLabel}</button>
-            </div>
-          ` : isRelative ? `
-            <div class="population-card-actions">
-              <button type="button" class="btn btn-secondary" data-play-song="${song.song_id}">Play</button>
-              <span class="population-card-status">Relative</span>
-            </div>
-          ` : `
-            <div class="population-card-actions">
-              <span class="population-card-status is-muted">Locked</span>
-            </div>
-          `}
-        </article>
-      `;
-      }).join("");
-
-      return `
-        <section class="population-island-group" style="--island-accent:${islandColor(node)}">
-          <div class="population-island-header">
-            <div>
-              <h3>Island ${node}</h3>
-              <p>${songs.length} songs</p>
-            </div>
-          </div>
-          <div class="population-island-grid">${cards}</div>
-        </section>
+        <button
+          type="button"
+          class="family-tree-spotlight-chip ${isActive ? "is-active" : ""}"
+          data-activate-spotlight="${spotlight.index}"
+          style="--island-accent:${islandColor(spotlight.node)}"
+        >
+          <span>Spotlight ${spotlight.index + 1}</span>
+          <strong>#${spotlight.song_id}</strong>
+          <em>Island ${spotlight.node}</em>
+        </button>
       `;
     }).join("");
-
-    container.innerHTML = `
-      <article class="card family-tree-population-card">
-        <div class="family-tree-header">
-          <div>
-            <h2>Previous Generation #${state.metadata.previous_generation}</h2>
-            <p class="meta">Grouped by island. Spotlight songs are always playable.</p>
-          </div>
-        </div>
-        <div class="population-groups">${groupsMarkup}</div>
-      </article>
-    `;
-
-    container.querySelectorAll("[data-play-song]").forEach((button) => {
-      button.addEventListener("click", (event) => {
-        const songId = Number(button.dataset.playSong);
-        togglePlayback(songId, `/family_tree_wav/${songId}`, button);
-        event.stopPropagation();
-      });
-    });
-
-    container.querySelectorAll("[data-activate-spot]").forEach((button) => {
-      if (!button.dataset.activateSpot) return;
-      button.addEventListener("click", async () => {
-        const spotIndex = Number(button.dataset.activateSpot);
-        await toggleSpotlight(spotIndex);
-      });
-    });
-
-    container.querySelectorAll("[data-card-spot]").forEach((card) => {
-      card.addEventListener("click", async (event) => {
-        const target = event.target instanceof Element ? event.target : null;
-        if (target && (target.closest("[data-play-song]") || target.closest("[data-activate-spot]"))) {
-          return;
-        }
-        await toggleSpotlight(Number(card.dataset.cardSpot));
-      });
-    });
   }
 
-  function ensureHomeButton() {
-    if (document.querySelector(".family-tree-home-link")) return;
-    const intro = document.querySelector(".family-tree-intro");
-    if (!intro) return;
-    const actions = document.createElement("div");
-    actions.className = "btn-group family-tree-intro-actions";
-    actions.innerHTML = `<a href="/" class="btn btn-secondary family-tree-home-link">Back to Home</a>`;
-    intro.appendChild(actions);
+  function bindSpotlightChipActions(scope) {
+    scope.querySelectorAll('[data-activate-spotlight], [data-activate-placeholder]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const raw = button.dataset.activateSpotlight ?? button.dataset.activatePlaceholder;
+        await toggleSpotlight(Number(raw));
+      });
+    });
   }
 
   async function activateSpotlight(spotIndex) {
