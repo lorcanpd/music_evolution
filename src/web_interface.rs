@@ -23,7 +23,7 @@ use crate::play_genes::BinaryContent;
 use std::sync::atomic::Ordering;
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
-const STATIC_ASSET_VERSION: &str = "ft-20260510-1";
+const STATIC_ASSET_VERSION: &str = "ft-20260510-2";
 
 /// Base HTML layout with consistent styling
 fn base_layout(title: &str, content: Markup) -> Markup {
