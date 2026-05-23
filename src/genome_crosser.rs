@@ -143,33 +143,61 @@ impl GenomeCrosser {
     //     value as f64 / (255.0 * 10.0)
     // }
     fn decode_mutation_rate(bits: &[u8]) -> f64 {
-        let value = bits.iter().rev().enumerate().fold(
-            0, |acc, (i, &bit)| acc + (bit as usize * (1 << i))
-        );
-        let scaled_value = value as f64 / 255.0;
+        let value = bits.iter().take(8).fold(0usize, |acc, &bit| {
+            (acc << 1) + usize::from(bit != 0)
+        });
+        let scaled_value = (value as f64 / 255.0).clamp(0.0, 1.0);
         let lower_bound = 0.00125;
         let upper_bound = 0.07;
         lower_bound + scaled_value * (upper_bound - lower_bound)
     }
 
+    fn gen_bool(rng: &mut impl Rng, probability: f64) -> bool {
+        rng.gen_bool(probability.clamp(0.0, 1.0))
+    }
+
     fn apply_mutation(chromosome: &mut Vec<u8>, mutation_rate: f64) {
         let mut rng = rand::thread_rng();
+        let mutation_rate = mutation_rate.clamp(0.0, 1.0);
         let substitution_rate = mutation_rate * 0.8;
         let indel_rate = mutation_rate * 0.1;
         for bit in chromosome.iter_mut() {
-            if rng.gen_bool(substitution_rate) {
+            if Self::gen_bool(&mut rng, substitution_rate) {
                 *bit = 1 - *bit;
             }
         }
 
-        if rng.gen_bool(indel_rate) {
-            let pos = rng.gen_range(0..chromosome.len());
-            chromosome.insert(pos, rng.gen());
+        if Self::gen_bool(&mut rng, indel_rate) {
+            let pos = rng.gen_range(0..=chromosome.len());
+            chromosome.insert(pos, rng.gen_range(0..=1));
         }
 
-        if !chromosome.is_empty() && rng.gen_bool(indel_rate) {
+        if !chromosome.is_empty() && Self::gen_bool(&mut rng, indel_rate) {
             let pos = rng.gen_range(0..chromosome.len());
             chromosome.remove(pos);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mutation_rate_decode_is_bounded_for_long_or_non_binary_chromosomes() {
+        let bits = vec![255; 64];
+        let decoded = GenomeCrosser::decode_mutation_rate(&bits);
+
+        assert!((0.00125..=0.07).contains(&decoded));
+    }
+
+    #[test]
+    fn mutation_keeps_inserted_values_binary_and_handles_empty_chromosomes() {
+        let mut chromosome = Vec::new();
+        for _ in 0..100 {
+            GenomeCrosser::apply_mutation(&mut chromosome, 10.0);
+        }
+
+        assert!(chromosome.iter().all(|bit| *bit == 0 || *bit == 1));
     }
 }
