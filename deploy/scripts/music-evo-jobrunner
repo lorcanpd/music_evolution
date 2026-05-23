@@ -135,7 +135,9 @@ get_reproduction_stats() {
             ), 0) AS song_count,
             COALESCE((
                 SELECT COUNT(*)
-                FROM current_generation_fitness
+                FROM current_generation_fitness f
+                JOIN songs s ON s.song_id = f.song_id
+                WHERE s.generation = current_gen.generation
             ), 0) AS rating_count
         FROM current_gen
     " 2>&1)

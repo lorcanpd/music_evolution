@@ -182,7 +182,15 @@ pub async fn run_threshold_checker(
         };
         // Query total ratings.
         let total_ratings: i64 = match client
-            .query_one("SELECT COUNT(*) as count FROM current_generation_fitness", &[])
+            .query_one(
+                "
+                SELECT COUNT(*) as count
+                FROM current_generation_fitness f
+                JOIN songs s ON s.song_id = f.song_id
+                WHERE s.generation = (SELECT MAX(generation) FROM songs)
+                ",
+                &[],
+            )
             .await
         {
             Ok(row) => row.get("count"),

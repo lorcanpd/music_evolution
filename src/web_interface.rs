@@ -318,7 +318,15 @@ async fn get_ready_state(
         .unwrap_or((0, 0));
 
     let rating_count: i64 = client
-        .query_one("SELECT COUNT(*) as count FROM current_generation_fitness", &[])
+        .query_one(
+            "
+            SELECT COUNT(*) as count
+            FROM current_generation_fitness f
+            JOIN songs s ON s.song_id = f.song_id
+            WHERE s.generation = $1
+            ",
+            &[&current_gen],
+        )
         .await
         .map(|r| r.get("count"))
         .unwrap_or(0);
